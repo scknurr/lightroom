@@ -17,6 +17,9 @@ All scripts are **read-only**. None of them touch the live catalog, original pho
 
 Outputs go into a dated folder (e.g. `2026-10-05/`). That folder is gitignored because it holds the catalog snapshot and personal file paths.
 
+| `embed.py <out_dir>` | CLIP (ViT-B/32) embedding for every thumbnail, written to `clip.sqlite`. CPU-only; about 2 hours for the full library on a 4-core Mac. Resumable. |
+| `curate.py <out_dir>` | Turns the embeddings into an aesthetic score, zero-shot tags, themes, a taste model learned from your Lightroom picks and ratings, and a ranked, de-duplicated list of the best photos you haven't rated yet. Writes `curate.sqlite`, `curate-summary.json` and `curate.html`. Reruns in a minute or two. |
+
 ## Setup
 
 ```sh
@@ -54,11 +57,30 @@ Open `cull-review.html` to check the cutoffs. It shows the softest rejects, the 
 
 Sharpness is judged on the 512px thumbnail, so this catches visible blur and camera shake, not focus that is slightly off at 100%.
 
+## Finding the best shots
+
+```sh
+.venv/bin/python embed.py 2026-10-05     # once; ~2 h, Ctrl-C safe
+.venv/bin/python curate.py 2026-10-05    # rerun as often as you like
+```
+
+`curate.py` combines three signals into a 0–100 `score`:
+
+- **Aesthetic.** The LAION aesthetic predictor, a generic "is this a nice photo" score.
+- **Taste.** A model trained on your own Lightroom keepers. Images picked or rated `--pos-rating` (3) stars or more count as keepers. Rejects and a sample of unrated images serve as contrast. The summary reports its cross-validated AUC, so you can see how well it learned.
+- **Technical.** The `tech_score` from `cull.py`.
+
+Candidates come only from images you haven't rated yet that `cull.py` kept. Junk is excluded: screenshots, documents, receipts and accidental frames. Each theme is capped so one subject can't flood the list, and near-duplicates of a frame already chosen are skipped.
+
+`curate.html` shows the top candidates, the best few photos per theme and the junk it found. Tune `--w-aesthetic`, `--w-taste`, `--w-technical`, `--top`, `--clusters` and the other options in `--help`.
+
+On an Intel Mac, pip installs torch 2.2.x, the last release built for Intel Macs. It needs Python 3.12 or older for the venv.
+
 ## Roadmap
 
 1. ~~Thumbnail cache built from Lightroom's preview cache, plus the JPEGs embedded in RAW files~~ (`build_thumbs.py`)
 2. ~~Technical cull: blur, exposure, best-of-burst~~ (`cull.py`)
-3. CLIP embeddings → aesthetic score, zero-shot tags, theme clustering, learning from existing picks and ratings
+3. ~~CLIP embeddings → aesthetic score, zero-shot tags, theme clustering, learning from existing picks and ratings~~ (`embed.py`, `curate.py`)
 4. Editor pass on top candidates: hero selection, captions, crop and treatment suggestions, licensability flags
 5. Write-back through a Lightroom plugin: keywords, collections, ratings, develop settings
 6. Outputs: web gallery, stock and licensing sets, Instagram queue
