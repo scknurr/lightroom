@@ -8,12 +8,13 @@ from config import work_db
 
 # Sharpness = mean Laplacian variance of the 3 sharpest tiles at 1024px long side.
 # Calibrated by eye on the 2019 pilot (see review page "Blur cull" section).
-BLUR_HARD = 18.0
-BLUR_SOFT = 45.0
+BLUR_HARD = 10.0
+BLUR_SOFT = 25.0
 HERO_FRACTION = 0.015
 SELECT_FRACTION = 0.10
-# Conservative: false positives only keep a photo out of public sets; it stays a personal keeper.
-PRIVATE_THRESHOLD = 0.35
+# Calibrated by eye on the 2019 pilot (privacy.py three-way contrasts). A flag only keeps a photo out of
+# public sets; it stays a personal keeper. The editor pass adds a second, visual privacy check.
+PRIVATE_NUDITY, PRIVATE_UNDERWEAR, PRIVATE_DOCUMENT = 0.97, 0.80, 0.90
 
 
 def z(values):
@@ -36,7 +37,8 @@ def main():
         params = args.year
     rows = db.execute(f'''
         SELECT i.image_id, t.sharp_top3, t.luma, t.clip_dark, t.clip_bright, t.burst,
-               c.aesthetic, c.taste, c.junk, c.junk_p, i.pick, i.rating, c.sensitive_p
+               c.aesthetic, c.taste, c.junk, c.junk_p, i.pick, i.rating, c.priv_nudity, c.priv_underwear, c.priv_document,
+               i.camera, i.format
         FROM images i JOIN technical t USING(image_id) JOIN clip c USING(image_id) {where}''', params).fetchall()
     if not rows:
         print('nothing scored yet')
@@ -47,6 +49,7 @@ def main():
     taste = z([r[7] if r[7] is not None else float('nan') for r in rows])
     lsharp = z([math.log1p(s) for s in sharp])
     score = 0.45 * aes + 0.45 * taste + 0.10 * np.clip(lsharp, -2, 1.5)
+    score = score - 0.6 * (np.array(sharp) < BLUR_SOFT)
 
     reasons = {}
     for i, r in enumerate(rows):
@@ -58,7 +61,10 @@ def main():
             why.append('too dark')
         if bright > 0.55:
             why.append('blown out')
-        if junk in ('a screenshot', 'a photo of a document or receipt', 'a meme or graphic',
+        from_camera = bool(r[15]) and r[16] not in ('PNG',)
+        # Zero-shot junk labels misfire on real photographs (verified on the 2019 pilot), so only
+        # camera-less files (screenshots, downloads, graphics) can be junk-rejected.
+        if not from_camera and junk in ('a screenshot', 'a photo of a document or receipt', 'a meme or graphic',
                     'a test shot of a gray card or color chart', 'a photo of a computer monitor') and junk_p > 0.85:
             why.append(junk.replace('a photo of ', '').replace('a ', ''))
         reasons[iid] = why
@@ -93,7 +99,8 @@ def main():
             t = 'burst_alt'
         if t != 'reject' and r[1] < BLUR_SOFT:
             reasons[iid].append('soft')
-        private = int((r[12] or 0) > PRIVATE_THRESHOLD)
+        private = int((r[12] or 0) >= PRIVATE_NUDITY or (r[13] or 0) >= PRIVATE_UNDERWEAR
+                      or (r[14] or 0) >= PRIVATE_DOCUMENT)
         out.append((iid, float(score[i]), t, ','.join(reasons[iid]), r[5], burst_size[r[5]], private))
 
     db.execute('DROP TABLE IF EXISTS selection')

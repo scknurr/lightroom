@@ -8,6 +8,7 @@ yargs=(); for y in $YEARS; do yargs+=(--year $y); done
 $PY -u thumbs.py $yargs --workers ${THUMB_WORKERS:-6}
 $PY -u technical.py --workers 14
 $PY -W ignore -u embed.py --batch 48
+$PY -W ignore -u privacy.py
 $PY -u taste.py
 $PY -u select_best.py $yargs
 for y in $YEARS; do $PY -u review.py --year $y --out "/Volumes/G DRIVE/LR-RESCUE.noindex/review_$y.html"; done

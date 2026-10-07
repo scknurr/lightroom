@@ -68,6 +68,8 @@ local DEVELOP_RANGES = {
   Dehaze = { -100, 100 },
   Vibrance = { -100, 100 },
   Saturation = { -100, 100 },
+  PostCropVignetteAmount = { -100, 100 },
+  GrainAmount = { 0, 100 },
 }
 
 -- Keys that only work on process version 2012 (6.7) or later.

@@ -72,8 +72,9 @@ Develop details:
   `develop_suggestion` to send final values instead. The log's DEVELOP line
   shows the master's value next to the copy's value for every key.
 - **Settings accepted:** Exposure2012 (-5..5), Contrast2012, Highlights2012,
-  Shadows2012, Whites2012, Blacks2012, Clarity2012, Texture, Dehaze, Vibrance
-  and Saturation (all -100..100, clamped after adding). Other keys are dropped
+  Shadows2012, Whites2012, Blacks2012, Clarity2012, Texture, Dehaze, Vibrance,
+  Saturation, PostCropVignetteAmount (all -100..100) and GrainAmount (0..100),
+  clamped after adding. Other keys are dropped
   and logged.
   The 2012-style keys are dropped for photos on process versions older than 2012.
 - **Crop:** `left/right/top/bottom` are normalised 0..1 and `angle` maps to
