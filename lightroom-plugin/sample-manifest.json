@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "run_id": "2019-pilot-001",
+  "collection_set": "Rescue",
+  "photos": [
+    {
+      "uuid": "B3F1A2C4-0000-4000-8000-000000000001",
+      "image_id": 420476,
+      "path": "/Volumes/Y DRIVE/2019/2019-01-12/IMG_1234.CR2",
+      "keywords": ["Rescue|Subject|dog", "Rescue|Scene|forest", "Rescue|Light|golden hour"],
+      "rating": 4,
+      "pick": true,
+      "color_label": "green",
+      "title": "Dog in the forest at golden hour",
+      "caption": "A dog running between pine trees in late afternoon light.",
+      "collections": ["Heroes/2019", "Themes/Winter", "Licensable/Candidates", "Instagram/Queue"],
+      "develop_suggestion": {
+        "crop": {"left": 0.05, "right": 0.95, "top": 0.02, "bottom": 0.9, "angle": 0.0},
+        "settings": {"Exposure2012": 0.3, "Contrast2012": 15, "Highlights2012": -40, "Shadows2012": 30,
+                     "Vibrance": 10, "Clarity2012": 8, "Dehaze": 5},
+        "graduated_filters": [{"from": [0.5, 0.0], "to": [0.5, 0.35], "exposure": -0.6}]
+      }
+    },
+    {
+      "uuid": "C7D2E9F0-0000-4000-8000-000000000002",
+      "image_id": 420533,
+      "path": "/Volumes/Y DRIVE/2019/2019-02-03/IMG_2088.JPG",
+      "keywords": ["Rescue|Subject|mountain", "Rescue|Scene|snow"],
+      "rating": 3,
+      "collections": ["Themes/Winter"],
+      "develop_suggestion": {
+        "settings": {"Exposure2012": -0.2, "Highlights2012": -25, "Vibrance": 5}
+      }
+    }
+  ]
+}
