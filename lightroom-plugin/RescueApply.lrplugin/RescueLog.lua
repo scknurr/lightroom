@@ -28,7 +28,8 @@ end
 function Log:write(level, fmt, ...)
   if not self.f then return end
   local line = os.date('%Y-%m-%d %H:%M:%S') .. ' ' .. level .. ' ' .. format(fmt, ...) .. '\n'
-  self.f:write(line)
+  local ok, err = self.f:write(line)
+  if not ok and not self.writeError then self.writeError = tostring(err) end
 end
 
 function Log:info(fmt, ...) self:write('INFO ', fmt, ...) end
@@ -44,7 +45,10 @@ function Log:error(fmt, ...)
 end
 
 function Log:flush()
-  if self.f then self.f:flush() end
+  if self.f then
+    local ok, err = self.f:flush()
+    if not ok and not self.writeError then self.writeError = tostring(err) end
+  end
 end
 
 function Log:close()

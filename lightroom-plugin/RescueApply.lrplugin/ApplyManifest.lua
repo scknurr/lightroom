@@ -2,7 +2,8 @@
 ApplyManifest.lua - Library > Plug-in Extras > "Rescue: Apply manifest…"
 
 1. pick the manifest JSON
-2. options dialog: Dry run (default ON), develop suggestions on/off
+2. options dialog: Dry run (default ON), develop suggestions on/off,
+   import of the manifest's "import" files on/off
 3. plan (read-only); dry run reports and stops
 4. real run: confirm (with the XMP auto-write warning), then write in
    batches with a cancellable progress bar
@@ -50,6 +51,7 @@ local function optionsDialog(context, manifestPath)
   local props = LrBinding.makePropertyTable(context)
   props.dryRun = true
   props.doDevelop = true
+  props.doImport = true
   props.xmpOff = false
   local f = LrView.osFactory()
   local contents = f:column {
@@ -70,6 +72,16 @@ local function optionsDialog(context, manifestPath)
       title = 'Graduated filters in the manifest are not applied in this version; they are listed in the log.',
       width_in_chars = 70, height_in_lines = 2,
     },
+    f:checkbox {
+      title = 'Import: add the manifest\'s "import" files that are not in the catalog yet, in place',
+      value = LrView.bind('doImport'),
+    },
+    f:static_text {
+      title = 'Import works like Import > Add: files are never copied, moved, renamed or converted, and '
+        .. 'Lightroom reads the metadata already in them and their XMP sidecars. Ignored when the manifest '
+        .. 'has no "import" block.',
+      width_in_chars = 70, height_in_lines = 3,
+    },
     f:separator { fill_horizontal = 1 },
     f:static_text { title = XMP_WARNING, width_in_chars = 70, height_in_lines = 5 },
     f:checkbox {
@@ -84,7 +96,8 @@ local function optionsDialog(context, manifestPath)
     actionVerb = 'Continue',
   }
   if result ~= 'ok' then return nil end
-  return { dryRun = props.dryRun == true, doDevelop = props.doDevelop == true, xmpOff = props.xmpOff == true }
+  return { dryRun = props.dryRun == true, doDevelop = props.doDevelop == true,
+           doImport = props.doImport == true, xmpOff = props.xmpOff == true }
 end
 
 LrFunctionContext.postAsyncTaskWithContext('RescueApplyManifest', function(context)
@@ -127,10 +140,18 @@ LrFunctionContext.postAsyncTaskWithContext('RescueApplyManifest', function(conte
   local logPath = logPathFor(manifestPath)
   local log = Log.open(logPath)
   context:addCleanupHandler(function() log:close() end)
+  -- A real run needs the log: it is the record of every write, and the import
+  -- resume markers (IMPORT-ATTEMPT / IMPORT-OK) are read back from it.
+  if log.openError and not options.dryRun then
+    LrDialogs.message(DIALOG_TITLE, 'Cannot write the log file ' .. logPath .. ' ('
+      .. tostring(log.openError) .. '). A real run needs the log (it records every change and the '
+      .. 'imports, for safe re-runs). Nothing was written.', 'critical')
+    return
+  end
   log:info('==================================================================')
   log:info('Rescue: Apply manifest %s (plugin %s)', manifestPath, 'RescueApply 1.0.0')
-  log:info('Options: dryRun=%s develop=%s; user confirmed XMP auto-write OFF and catalog backed up: %s',
-    options.dryRun, options.doDevelop, options.xmpOff)
+  log:info('Options: dryRun=%s develop=%s import=%s; user confirmed XMP auto-write OFF and catalog backed up: %s',
+    options.dryRun, options.doDevelop, options.doImport, options.xmpOff)
 
   local progress = LrProgressScope {
     title = options.dryRun and 'Rescue: dry run' or 'Rescue: applying manifest',
@@ -142,7 +163,9 @@ LrFunctionContext.postAsyncTaskWithContext('RescueApplyManifest', function(conte
     manifest = manifest,
     dryRun = options.dryRun,
     doDevelop = options.doDevelop,
+    doImport = options.doImport,
     log = log,
+    logPath = logPath, -- read back for IMPORT-OK / IMPORT-ATTEMPT lines, so a re-run finishes interrupted imports
     util = U,
     json = json,
     progress = progress,
@@ -168,6 +191,8 @@ LrFunctionContext.postAsyncTaskWithContext('RescueApplyManifest', function(conte
   local footer = '\n\nLog: ' .. logPath
   if log.openError then
     footer = '\n\nWARNING: could not write the log file (' .. tostring(log.openError) .. ')'
+  elseif log.writeError then
+    footer = footer .. '\nWARNING: writing to the log failed (' .. tostring(log.writeError) .. '); it is incomplete'
   elseif log.warnings + log.errors > 0 then
     footer = footer .. '\n(' .. log.warnings .. ' warnings, ' .. log.errors .. ' errors in the log)'
   end

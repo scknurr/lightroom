@@ -6,7 +6,10 @@ RescueMetadata.lua - plugin-defined photo metadata (LrMetadataProvider)
                 'rescue-edit' once developed, 'rescue-orphan' for a copy made
                 of the wrong photo. Survives the user renaming the copy, so
                 re-runs never create a second copy.
-  rescueRunId   run_id of the manifest that developed that copy.
+                'imported' on a photo the manifest's import block added to the
+                catalog (the file itself is untouched).
+  rescueRunId   run_id of the manifest that developed that copy, or that
+                imported the photo.
   rescueLastRun run_id of the last manifest that changed a master's metadata
                 (lets you find everything a run touched via the Library filter).
 

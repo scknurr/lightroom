@@ -3,10 +3,12 @@ Info.lua - Lightroom Rescue: Apply manifest
 
 Applies a JSON manifest of decisions (keywords, ratings, flags, labels,
 title/caption, collections, develop suggestions on a NEW virtual copy) produced
-by the lightroom-rescue Python pipeline.
+by the lightroom-rescue Python pipeline, and can add listed files that are not
+in the catalog yet IN PLACE (catalog:addPhoto, like Import > Add).
 
 Minimum SDK 6.0: pickStatus/returnExisting (4.0), createVirtualCopies (5.0),
-applyDevelopSettings (6.0).
+applyDevelopSettings (6.0). addPhoto is 2.0 (path only; its preset arguments
+need LrC 12.5 and are not used).
 ------------------------------------------------------------------------------]]
 
 return {

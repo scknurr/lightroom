@@ -16,6 +16,15 @@ Phases
   7. develop    per master: select it, createVirtualCopies('Rescue edit')
                 outside any gate, verify; then one gate per group applies the
                 suggestion to the NEW copies and tags them (rescueRole)
+  8. import     optional manifest "import" block: files NOT yet in the catalog
+                are added IN PLACE with catalog:addPhoto (= Import > Add, no
+                copy/move/rename/convert), IMPORT_GATE per write gate. Each path
+                is logged (IMPORT-ATTEMPT) before its gate; after the gate it is
+                re-resolved by path, and only an id that is new and unique gets
+                an IMPORT-OK marker and is tagged in a second gate (rescueRole =
+                'imported' + rescueRunId) and added to <set>/Imported/<run_id>.
+                Planned (read-only) together with phases 2-4, so a DRY RUN
+                reports would-import / already catalogued / missing counts.
 
 Safety rules enforced here
   * nothing is deleted; no API that touches original files is called
@@ -33,10 +42,20 @@ Safety rules enforced here
   * photos the user REJECTED get keywords/title/caption only: no rating, pick,
     label, collection or virtual copy
   * graduated filters are NOT applied (no confirmed SDK format); logged instead
+  * import only ADDS catalog entries for files that exist and are not in the
+    catalog (checked at planning AND again inside the write gate). Files are
+    never copied, moved, renamed, converted or deleted. A file whose path
+    matches a catalogued photo except for case / Unicode accents, or a JPEG
+    next to a catalogued raw (RAW+JPEG pair), is skipped, not imported. Only
+    photos this run added (confirmed by path, not pre-existing) are tagged;
+    on a re-run only photos the log or the tags say this run_id imported are
+    finished (tag / collection); every other catalogued photo is left alone.
 ------------------------------------------------------------------------------]]
 
 local LrApplication = import 'LrApplication'
 local LrApplicationView = import 'LrApplicationView'
+local LrFileUtils = import 'LrFileUtils'
+local LrPathUtils = import 'LrPathUtils'
 local LrTasks = import 'LrTasks'
 
 local E = {}
@@ -45,8 +64,11 @@ E.COPY_NAME = 'Rescue edit'
 E.COPY_ROLE = 'rescue-edit'            -- created AND developed
 E.PENDING_ROLE = 'rescue-edit-pending' -- created + tagged, develop not yet applied
 E.ORPHAN_ROLE = 'rescue-orphan'        -- made by mistake (wrong selection); never touched again
+E.IMPORT_ROLE = 'imported'             -- added to the catalog by the manifest's import block
+E.IMPORT_SET = 'Imported'              -- <collection_set>/Imported/<run_id>
 
 local METADATA_CHUNK = 200   -- photos per metadata write gate
+local IMPORT_GATE = 50       -- addPhoto calls per write gate (one file per call, slow; keeps the lock short)
 local DEVELOP_GROUP = 25     -- copies created, then developed in one gate
 local READ_CHUNK = 500       -- photos per batchGet* call
 local YIELD_EVERY = 100      -- lookups between yields / cancel checks
@@ -76,6 +98,14 @@ local DEVELOP_RANGES = {
 local NEEDS_PV2012 = {
   Exposure2012 = true, Contrast2012 = true, Highlights2012 = true, Shadows2012 = true,
   Whites2012 = true, Blacks2012 = true, Clarity2012 = true, Texture = true, Dehaze = true,
+}
+
+-- Sidecars and other non-media files that are never passed to addPhoto even
+-- if the manifest lists them (hidden files, incl. macOS "._" AppleDouble
+-- files on exFAT/FAT drives, are skipped by name).
+local IMPORT_SKIP_EXT = {
+  xmp = true, thm = true, lrv = true, aae = true, xml = true, json = true, txt = true,
+  lrcat = true, lrdata = true, db = true, ini = true, dop = true, pp3 = true, cos = true, on1 = true,
 }
 
 -------------------------------------------------------------------------------
@@ -372,6 +402,51 @@ local function normalizeEntry(S, raw, idx, rootSets)
   return e
 end
 
+local function isAbsolutePath(p)
+  return string.sub(p, 1, 1) == '/' or string.find(p, '^%a:[\\/]') ~= nil or string.sub(p, 1, 2) == '\\\\'
+end
+
+-- manifest.import -> S.import = { files = { {idx, path}, ... }, collection, limit, note }
+-- Returns true, or false + message for a malformed block (the run stops).
+local function normalizeImport(S, raw)
+  local U, log = S.U, S.log
+  if raw == nil then return true end
+  if type(raw) ~= 'table' or raw == S.json.null then return false, 'Manifest "import" is not an object.' end
+  if type(raw.files) ~= 'table' or (#raw.files == 0 and next(raw.files) ~= nil) then
+    return false, 'Manifest "import" has no "files" array.'
+  end
+  local imp = { files = {}, collection = raw.collection ~= false }
+  if U.isNonEmptyString(raw.folder_note) then imp.note = U.trim(raw.folder_note) end
+  if raw.max_files ~= nil then
+    local n = tonumber(raw.max_files)
+    if n and n >= 1 then
+      imp.limit = math.floor(n)
+    else
+      log:warn('import.max_files %s is not a positive number, ignored', raw.max_files)
+    end
+  end
+  if raw.collection ~= nil and type(raw.collection) ~= 'boolean' then
+    log:warn('import.collection must be true/false; using true')
+    imp.collection = true
+  end
+  for i, p in ipairs(raw.files) do
+    if type(p) ~= 'string' or U.trim(p) == '' then
+      log:warn('import.files[%s]: not a path string, skipped', i)
+      inc(S, 'import_invalid')
+    elseif p ~= U.trim(p) or not isAbsolutePath(p) then
+      -- Not trimmed on purpose: a path with leading/trailing spaces is ambiguous.
+      log:warn('import.files[%s]: "%s" is not an absolute path, skipped', i, p)
+      inc(S, 'import_invalid')
+    else
+      imp.files[#imp.files + 1] = { idx = i, path = p }
+    end
+  end
+  S.import = imp
+  log:info('Import block: %s files listed (%s invalid), collection %s, max_files %s, folder_note: %s',
+    #imp.files, S.c.import_invalid, imp.collection and 'on' or 'off', imp.limit or 'none', imp.note or '-')
+  return true
+end
+
 local function validate(S, manifest)
   local U = S.U
   if type(manifest) ~= 'table' then return false, 'Manifest is not a JSON object.' end
@@ -379,8 +454,13 @@ local function validate(S, manifest)
     return false, 'Unsupported manifest version ' .. tostring(manifest.version) .. ' (this plugin reads version 1).'
   end
   if not U.isNonEmptyString(manifest.run_id) then return false, 'Manifest has no run_id.' end
-  if type(manifest.photos) ~= 'table' then return false, 'Manifest has no photos array.' end
+  -- An import-only manifest may leave out "photos".
+  local photos = manifest.photos
+  if photos == nil and manifest.import ~= nil then photos = {} end
+  if type(photos) ~= 'table' then return false, 'Manifest has no photos array.' end
   S.runId = U.sanitizeId(U.trim(manifest.run_id))
+  local okI, errI = normalizeImport(S, manifest.import)
+  if not okI then return false, errI end
 
   local rootName = U.isNonEmptyString(manifest.collection_set) and manifest.collection_set or 'Rescue'
   local rootSets = U.split(rootName, '/')
@@ -388,7 +468,7 @@ local function validate(S, manifest)
   S.rootSets = rootSets
 
   S.entries = {}
-  for i, raw in ipairs(manifest.photos) do
+  for i, raw in ipairs(photos) do
     local e = normalizeEntry(S, raw, i, rootSets)
     if e then S.entries[#S.entries + 1] = e else inc(S, 'invalidEntries') end
   end
@@ -560,9 +640,29 @@ local function pace(S, i, total)
   return false
 end
 
+-- Adds one collection spec (as built by normalizeEntry: setNames, setLowers,
+-- setKey, name, key, display) and its collection sets to the structure plan.
+-- Shared by manifest photos and the import block's collection.
+local function registerCollection(S, c)
+  for d = 1, #c.setNames do
+    local key = table.concat(c.setLowers, '/', 1, d)
+    if not S.setInfo[key] then
+      S.setInfo[key] = {
+        name = c.setNames[d], lower = c.setLowers[d], depth = d,
+        parentKey = d > 1 and table.concat(c.setLowers, '/', 1, d - 1) or nil,
+        display = table.concat(c.setNames, '/', 1, d),
+      }
+      if d > S.setMaxDepth then S.setMaxDepth = d end
+    end
+  end
+  if not S.colInfo[c.key] then
+    S.colInfo[c.key] = { name = c.name, lower = S.U.lower(c.name), depth = 1,
+                         setKey = c.setKey, display = c.display }
+  end
+end
+
 local function planStructure(S)
   setPhase(S, 'Reading keyword and collection trees')
-  local U = S.U
   for i, pl in ipairs(S.plans) do
     if pace(S, i, #S.plans) then return end
     for _, k in ipairs(pl.entry.keywords) do
@@ -583,21 +683,7 @@ local function planStructure(S)
     end
     if not isProtected(pl.cur) then
       for _, c in ipairs(pl.entry.collections) do
-        for d = 1, #c.setNames do
-          local key = table.concat(c.setLowers, '/', 1, d)
-          if not S.setInfo[key] then
-            S.setInfo[key] = {
-              name = c.setNames[d], lower = c.setLowers[d], depth = d,
-              parentKey = d > 1 and table.concat(c.setLowers, '/', 1, d - 1) or nil,
-              display = table.concat(c.setNames, '/', 1, d),
-            }
-            if d > S.setMaxDepth then S.setMaxDepth = d end
-          end
-        end
-        if not S.colInfo[c.key] then
-          S.colInfo[c.key] = { name = c.name, lower = U.lower(c.name), depth = 1,
-                               setKey = c.setKey, display = c.display }
-        end
+        registerCollection(S, c)
       end
     end
   end
@@ -1437,6 +1523,578 @@ local function applyDevelop(S)
 end
 
 -------------------------------------------------------------------------------
+-- 8. import (add existing files to the catalog in place)
+--
+-- Read-only planning (dry run and real run): planImport, planImportFinish.
+-- Writes (real run only): applyImport. The only catalog writes are
+-- catalog:addPhoto(path), setPropertyForPlugin (rescueRole / rescueRunId) and
+-- collection:addPhotos. No file on disk is written, moved or removed.
+
+local function hasNonAscii(s)
+  return string.find(s, '[\128-\255]') ~= nil
+end
+
+-- Comparison key that ignores ASCII case and Unicode normalisation (NFC vs
+-- NFD): every precomposed non-ASCII character, and every base letter followed
+-- by combining marks (U+0300..U+036F), becomes '?'. "Café" in NFC and NFD
+-- give the same key. Deliberately loose: a key match only ever causes a
+-- SKIP ("possible duplicate"), never an import or a write.
+local function looseKey(s)
+  local out = {}
+  local i, n = 1, #s
+  while i <= n do
+    local b = string.byte(s, i)
+    local len = (b < 0x80 and 1) or (b >= 0xF0 and 4) or (b >= 0xE0 and 3) or (b >= 0xC0 and 2) or 1
+    if b < 0x80 then
+      out[#out + 1] = string.lower(string.char(b))
+    else
+      local cp = -1
+      if len == 2 then cp = (b - 0xC0) * 64 + ((string.byte(s, i + 1) or 0x80) - 0x80) end
+      if cp >= 0x300 and cp <= 0x36F and #out > 0 then
+        out[#out] = '?'   -- combining mark: fold into the preceding letter
+      else
+        out[#out + 1] = '?'
+      end
+    end
+    i = i + len
+  end
+  return table.concat(out)
+end
+
+-- Resume markers for THIS run_id, read back from the log file:
+--   IMPORT-ATTEMPT<TAB>run<TAB>path   written and flushed BEFORE each import
+--                                     gate (the file may end up in the catalog)
+--   IMPORT-OK<TAB>run<TAB>id<TAB>path written after the gate, only for a
+--                                     photo that passed every post-gate check
+-- Returns ok[path] = id string (a re-run finishes tagging only a photo whose
+-- id still matches) and attempted[path] = true (catalogued but not ours =
+-- "uncertain": reported, never tagged automatically).
+-- IMPORT-OK replaces the IMPORTED marker of the first version, which was
+-- written before the post-gate checks; IMPORTED lines are ignored on purpose.
+local function readImportLog(S)
+  local okSet, attempted, n = {}, {}, 0
+  if not S.logPath then return okSet, attempted, n end
+  local ok, err = pcall(function()
+    local f = io.open(S.logPath, 'r')
+    if not f then return end
+    local okMarker = 'IMPORT-OK\t' .. S.runId .. '\t'
+    local attMarker = 'IMPORT-ATTEMPT\t' .. S.runId .. '\t'
+    for line in f:lines() do
+      local s = string.find(line, okMarker, 1, true)
+      if s then
+        local id, path = string.match(string.sub(line, s + #okMarker), '^([^\t]*)\t(.*)$')
+        if id and id ~= '' and id ~= '?' and path and path ~= '' then
+          if not okSet[path] then n = n + 1 end
+          okSet[path] = id
+          attempted[path] = true
+        end
+      else
+        s = string.find(line, attMarker, 1, true)
+        if s then
+          local path = string.sub(line, s + #attMarker)
+          if path ~= '' then attempted[path] = true end
+        end
+      end
+    end
+    f:close()
+  end)
+  if not ok then S.log:warn('Could not read earlier import markers from the log: %s', tostring(err)) end
+  return okSet, attempted, n
+end
+
+-- Index of the catalogued photos in one folder (deep = with subfolders):
+-- loose[key] = id, rawBase[key without extension] = id of a RAW/DNG photo,
+-- ids[localIdentifier] = true. failed / incomplete mark an index that cannot
+-- prove a file is new (files checked against it are skipped).
+local function buildFolderIndex(S, folder, deep, dir)
+  local idx = { loose = {}, rawBase = {}, ids = {}, n = 0, deep = deep, dir = dir }
+  local ok, photos = LrTasks.pcall(function() return folder:getPhotos(deep) end)
+  if not ok or type(photos) ~= 'table' then
+    idx.failed = 'folder:getPhotos failed: ' .. tostring(photos)
+    S.log:warn('Import check: could not list catalogued photos in %s: %s', dir, idx.failed)
+    return idx
+  end
+  for first = 1, #photos, READ_CHUNK do
+    local chunk = slice(photos, first, first + READ_CHUNK - 1)
+    local rows = batchRead(S, 'raw', chunk, { 'path', 'fileFormat' }, { 'path', 'fileFormat' })
+    for _, p in ipairs(chunk) do
+      local row = rows[p] or {}
+      idx.ids[p.localIdentifier] = true
+      idx.n = idx.n + 1
+      if type(row.path) == 'string' then
+        idx.loose[looseKey(row.path)] = p.localIdentifier
+        if row.fileFormat == 'RAW' or row.fileFormat == 'DNG' then
+          idx.rawBase[looseKey(LrPathUtils.removeExtension(row.path))] = p.localIdentifier
+        end
+      else
+        idx.incomplete = true
+      end
+    end
+    LrTasks.yield()
+  end
+  S.log:info('Import check: indexed %s catalogued photos in %s%s%s', idx.n, dir,
+    deep and ' (with subfolders)' or '', idx.incomplete and ' (some paths unreadable)' or '')
+  return idx
+end
+
+-- No ancestor of `dir` is in the catalog under its exact spelling. A catalog
+-- root folder may still hold it under another case / normalisation
+-- ('/Volumes/Drive/photos' vs '.../Photos', NFC vs NFD). Compare `dir` with
+-- every root folder's path by looseKey; the longest root that is `dir` or a
+-- loose prefix of it is indexed with subfolders. If the roots cannot be
+-- listed, return a failed index, so the file is skipped, not imported unchecked.
+local function rootFolderIndex(S, dir)
+  if S.importRoots == nil then
+    local ok, roots = LrTasks.pcall(function() return S.catalog:getFolders() end)
+    if not ok or type(roots) ~= 'table' then
+      S.importRoots = { failed = 'catalog:getFolders failed: ' .. tostring(roots) }
+      S.log:warn('Import check: %s', S.importRoots.failed)
+    else
+      local list = {}
+      for _, folder in ipairs(roots) do
+        local okP, path = LrTasks.pcall(function() return folder:getPath() end)
+        if okP and type(path) == 'string' and path ~= '' then
+          list[#list + 1] = { folder = folder, path = path, key = looseKey(path) }
+        else
+          list.failed = 'folder:getPath failed for a catalog root folder: ' .. tostring(path)
+          S.log:warn('Import check: %s', list.failed)
+        end
+      end
+      S.importRoots = list
+    end
+  end
+  local roots = S.importRoots
+  if roots.failed then return { failed = roots.failed } end
+  local dk = looseKey(dir)
+  local best
+  for _, r in ipairs(roots) do
+    local rk = string.gsub(r.key, '/+$', '')
+    if rk ~= '' and (dk == rk or string.sub(dk, 1, #rk + 1) == rk .. '/') then
+      if not best or #rk > #best.key then best = { folder = r.folder, path = r.path, key = rk } end
+    end
+  end
+  if not best then return nil end
+  local cacheKey = 'deep:' .. best.path
+  local idx = S.importFolderIdx[cacheKey]
+  if not idx then
+    S.log:info('Import check: %s matches catalog root folder %s only when case/accents are ignored', dir, best.path)
+    idx = buildFolderIndex(S, best.folder, true, best.path)
+    S.importFolderIdx[cacheKey] = idx
+  end
+  return idx
+end
+
+-- Index for the folder that would hold `dir`. If `dir` itself is not a
+-- catalog folder, the nearest catalogued ancestor is indexed with subfolders,
+-- because the folder may be catalogued under a different case / normalisation.
+-- Returns nil when no ancestor is in the catalog (nothing there to collide with).
+local function folderIndex(S, dir)
+  if not dir or dir == '' then return nil end
+  local cached = S.importFolderIdx[dir]
+  if cached ~= nil then return cached or nil end
+  local idx
+  local ok, folder = LrTasks.pcall(function() return S.catalog:getFolderByPath(dir) end)
+  if not ok then
+    idx = { failed = 'getFolderByPath failed: ' .. tostring(folder) }
+  elseif folder then
+    idx = buildFolderIndex(S, folder, false, dir)
+  else
+    local d, guard = LrPathUtils.parent(dir), 0
+    while d and d ~= '' and guard < 64 do
+      local okA, anc = LrTasks.pcall(function() return S.catalog:getFolderByPath(d) end)
+      if not okA then
+        idx = { failed = 'getFolderByPath failed: ' .. tostring(anc) }
+        break
+      end
+      if anc then
+        local key = 'deep:' .. d
+        idx = S.importFolderIdx[key] or buildFolderIndex(S, anc, true, d)
+        S.importFolderIdx[key] = idx
+        break
+      end
+      local up = LrPathUtils.parent(d)
+      if up == d then break end
+      d = up
+      guard = guard + 1
+    end
+    if not idx then idx = rootFolderIndex(S, dir) end
+  end
+  S.importFolderIdx[dir] = idx or false
+  return idx
+end
+
+local function importFileLabel(f)
+  return 'import.files[' .. f.idx .. '] ' .. f.path
+end
+
+local function planImportCollection(S)
+  local imp, U = S.import, S.U
+  local setNames = {}
+  for _, s in ipairs(S.rootSets) do setNames[#setNames + 1] = s end
+  setNames[#setNames + 1] = E.IMPORT_SET
+  local setLowers = {}
+  for i, s in ipairs(setNames) do setLowers[i] = U.lower(s) end
+  local setKey = table.concat(setLowers, '/')
+  -- S.runId went through sanitizeId, so it has no '/' and stays one collection.
+  local c = {
+    setNames = setNames, setLowers = setLowers, setKey = setKey, name = S.runId,
+    key = setKey .. '//' .. U.lower(S.runId), display = table.concat(setNames, '/') .. '/' .. S.runId,
+  }
+  registerCollection(S, c)
+  imp.colKey, imp.colDisplay = c.key, c.display
+end
+
+-- Read-only. Sorts every listed file into exactly one bucket:
+--   toImport  exists on disk, not in the catalog, no near-duplicate
+--   finish    in the catalog AND imported earlier by this run_id (log or tag)
+--   skipped   already catalogued / missing / not media / duplicate in list /
+--             possible duplicate / JPEG next to a catalogued raw / unknown
+local function planImport(S)
+  local imp, U, log = S.import, S.U, S.log
+  setPhase(S, string.format('Checking %d files to import', #imp.files))
+  imp.toImport, imp.finish, imp.missing = {}, {}, {}
+  local logged, attempted, nLogged = readImportLog(S)
+  if nLogged > 0 then log:info('Import: %s paths in the log were imported earlier by run %s', nLogged, S.runId) end
+  imp.uncertain = {}
+  local seen = {}
+  local total = #imp.files
+  for i, f in ipairs(imp.files) do
+    if pace(S, i, total) then return end
+    local p = f.path
+    local label = importFileLabel(f)
+    local function skip(counter, level, why)
+      inc(S, counter)
+      log[level](log, 'IMPORT-SKIP %s: %s', label, why)
+    end
+    local leaf = LrPathUtils.leafName(p) or ''
+    local ext = U.lower(LrPathUtils.extension(p) or '')
+    -- Loose key (case AND Unicode normalisation): NFC and NFD spellings are
+    -- one file on APFS/HFS+, and a second addPhoto for it in the same gate
+    -- would not see the first one. Loose = may also skip a different file
+    -- whose name differs only in accented letters (skip only, never a write).
+    local dupKey = looseKey(p)
+    if seen[dupKey] then
+      skip('import_dupInList', 'warn', 'listed twice (same path, ignoring case and accents)')
+    elseif string.sub(leaf, 1, 1) == '.' or IMPORT_SKIP_EXT[ext] then
+      seen[dupKey] = true
+      skip('import_notMedia', 'info', 'hidden or sidecar/non-media file, never imported')
+    else
+      seen[dupKey] = true
+      local okF, photo = LrTasks.pcall(function() return S.catalog:findPhotoByPath(p) end)
+      if not okF then
+        skip('import_unknown', 'warn', 'findPhotoByPath failed (' .. tostring(photo) .. '); not imported')
+      elseif photo then
+        inc(S, 'import_alreadyCataloged')
+        local id = photo.localIdentifier
+        local okR, role = LrTasks.pcall(function() return photo:getPropertyForPlugin(S.plugin, 'rescueRole') end)
+        local okI, rid = LrTasks.pcall(function() return photo:getPropertyForPlugin(S.plugin, 'rescueRunId') end)
+        local ours = (logged[p] ~= nil and logged[p] == tostring(id))
+          or (okR and okI and role == E.IMPORT_ROLE and rid == S.runId)
+        if not ours and attempted[p] then
+          inc(S, 'import_uncertain')
+          imp.uncertain[#imp.uncertain + 1] = p
+          log:warn('IMPORT-UNCERTAIN %s: in the catalog (id %s); an earlier run %s tried to import it but '
+            .. 'could not confirm that it added this photo, so it is NOT tagged. Check it and tag it by hand '
+            .. 'if it is new.', label, id, S.runId)
+        elseif not ours then
+          log:info('IMPORT-SKIP %s: already in the catalog (id %s); not touched', label, id)
+        elseif not (okR and okI) then
+          log:warn('IMPORT-SKIP %s: imported earlier by this run (id %s) but its tags cannot be read; '
+            .. 'not touched', label, id)
+        elseif U.isBlank(role) or (role == E.IMPORT_ROLE and (U.isBlank(rid) or rid == S.runId)) then
+          imp.finish[#imp.finish + 1] = {
+            f = f, photo = photo, id = id, needTag = U.isBlank(role) or U.isBlank(rid),
+          }
+          inc(S, 'import_earlier')
+          log:info('IMPORT-FINISH %s: imported earlier by this run (id %s, rescueRole=%s)', label, id, role)
+        else
+          log:warn('IMPORT-SKIP %s: imported earlier by this run (id %s) but now tagged rescueRole=%s '
+            .. 'rescueRunId=%s; not touched', label, id, role, rid)
+        end
+      else
+        local okE, kind = LrTasks.pcall(function() return LrFileUtils.exists(p) end)
+        if not okE then
+          skip('import_unknown', 'warn', 'could not check the file on disk (' .. tostring(kind) .. ')')
+        elseif kind == 'directory' then
+          skip('import_notFile', 'warn', 'is a folder, not a file')
+        elseif kind ~= 'file' then
+          imp.missing[#imp.missing + 1] = p
+          skip('import_missing', 'warn', 'missing on disk (drive not attached?)')
+        else
+          local idx = folderIndex(S, LrPathUtils.parent(p))
+          local hit = idx and idx.loose and idx.loose[looseKey(p)]
+          local isJpeg = ext == 'jpg' or ext == 'jpeg'
+          local rawHit = isJpeg and idx and idx.rawBase and idx.rawBase[looseKey(LrPathUtils.removeExtension(p))]
+          if idx and idx.failed then
+            skip('import_unknown', 'warn', 'could not check the catalog folder (' .. idx.failed .. '); not imported')
+          elseif hit then
+            skip('import_possibleDup', 'warn', string.format('catalog photo id %s has the same path except for '
+              .. 'case or accents (Unicode normalisation); not imported, to avoid a duplicate', tostring(hit)))
+          elseif rawHit then
+            skip('import_jpegNextToRaw', 'warn', string.format('JPEG next to catalogued raw id %s (RAW+JPEG '
+              .. 'pair?); not imported', tostring(rawHit)))
+          elseif idx and idx.incomplete then
+            skip('import_unknown', 'warn', 'some catalogued paths in ' .. tostring(idx.dir)
+              .. ' could not be read, so a duplicate cannot be ruled out; not imported')
+          else
+            f.preIds = idx and idx.ids or nil   -- ids that existed before: never tagged
+            imp.toImport[#imp.toImport + 1] = f
+            log:info('IMPORT-PLAN %s: will be added in place', label)
+          end
+        end
+      end
+    end
+  end
+  tick(S, total, total)
+  if imp.limit and #imp.toImport > imp.limit then
+    inc(S, 'import_deferred', #imp.toImport - imp.limit)
+    log:info('Import: max_files %s; %s files left for a later run', imp.limit, #imp.toImport - imp.limit)
+    imp.toImport = slice(imp.toImport, 1, imp.limit)
+  end
+  inc(S, 'plan_importFiles', #imp.toImport)
+  if imp.collection and (#imp.toImport > 0 or #imp.finish > 0) then planImportCollection(S) end
+  log:info('Import plan: %s to import, %s already catalogued (%s from earlier runs of %s), %s missing on disk',
+    #imp.toImport, S.c.import_alreadyCataloged, #imp.finish, S.runId, S.c.import_missing)
+end
+
+-- After planStructure: which earlier imports still need their tag or the
+-- collection. Read-only.
+local function planImportFinish(S)
+  local imp = S.import
+  local col = imp.colKey and not S.colSmart[imp.colKey] and S.colCache[imp.colKey] or nil
+  local members = col and collectionMembers(S, imp.colKey) or {}
+  local keep = {}
+  for _, t in ipairs(imp.finish) do
+    t.needCol = imp.colKey ~= nil and not S.colSmart[imp.colKey] and not members[t.id]
+    if t.needTag then inc(S, 'plan_importFinishTags') end
+    if t.needCol then inc(S, 'plan_importFinishCols') end
+    if t.needTag or t.needCol then keep[#keep + 1] = t end
+  end
+  imp.finish = keep
+end
+
+-- Gate: (re)tag `targets` = { {photo, id, label, needTag, needCol}, ... } and
+-- add those with needCol to `col`. The role is re-read inside the gate; a
+-- photo that has meanwhile got a different role is left alone.
+local function tagImported(S, targets, col, gateName)
+  if #targets == 0 then return end
+  local results, colRes
+  local ok, gateErr = runGate(S, gateName, function()
+    results, colRes = {}, nil
+    local toCol = {}
+    for _, t in ipairs(targets) do
+      local r = { t = t }
+      if t.needTag then
+        local okR, role = LrTasks.pcall(function() return t.photo:getPropertyForPlugin(S.plugin, 'rescueRole') end)
+        if not okR then
+          r.err = 'could not re-read rescueRole: ' .. tostring(role)
+        elseif not S.U.isBlank(role) and role ~= E.IMPORT_ROLE then
+          r.err = 'now tagged rescueRole=' .. tostring(role) .. '; not touched'
+        else
+          r.ok, r.err = LrTasks.pcall(function()
+            t.photo:setPropertyForPlugin(S.plugin, 'rescueRole', E.IMPORT_ROLE)
+            t.photo:setPropertyForPlugin(S.plugin, 'rescueRunId', S.runId)
+          end)
+        end
+      end
+      if t.needCol and col and not r.err then toCol[#toCol + 1] = t end
+      results[#results + 1] = r
+    end
+    if #toCol > 0 then
+      local photos, ids = {}, {}
+      for i, t in ipairs(toCol) do photos[i] = t.photo; ids[i] = t.id end
+      local okA, errA = LrTasks.pcall(function() col:addPhotos(photos) end)
+      colRes = { ok = okA, err = errA, n = #photos, ids = ids }
+    end
+  end)
+  if not ok then
+    inc(S, 'chunksFailed')
+    S.log:error('"%s" NOT written (%s): %s imported photos are untagged; re-running the same manifest '
+      .. 'finishes them (they are in the log as IMPORT-OK)', gateName, tostring(gateErr), #targets)
+    return
+  end
+  for _, r in ipairs(results) do
+    if r.ok then
+      inc(S, 'importTagged')
+      S.log:info('TAGGED %s: id %s rescueRole=%s rescueRunId=%s', r.t.label, r.t.id, E.IMPORT_ROLE, S.runId)
+    elseif r.err then
+      inc(S, 'photoErrors')
+      S.log:error('%s: id %s not tagged: %s', r.t.label, r.t.id, tostring(r.err))
+    end
+  end
+  if colRes then
+    if colRes.ok then
+      inc(S, 'importCollectionAdds', colRes.n)
+      S.log:info('COLLECTION "%s" +%s imported photos (ids %s)', S.import.colDisplay, colRes.n,
+        table.concat(colRes.ids, ','))
+    else
+      inc(S, 'photoErrors', colRes.n)
+      S.log:error('Adding %s imported photos to "%s" failed: %s', colRes.n, S.import.colDisplay, tostring(colRes.err))
+    end
+  end
+end
+
+local function applyImport(S)
+  local imp = S.import
+  local col
+  if imp.colKey then
+    if S.colSmart[imp.colKey] then
+      S.log:warn('Import collection "%s" is a smart collection; imported photos are not added to it', imp.colDisplay)
+    else
+      col = S.colCache[imp.colKey]
+      if not col then
+        S.log:warn('Import collection "%s" is unavailable; photos are imported and tagged but not added to it',
+          imp.colDisplay)
+      end
+    end
+  end
+
+  -- 1. finish photos an earlier, interrupted run of this run_id imported.
+  if #imp.finish > 0 then
+    setPhase(S, string.format('Finishing %d earlier imports', #imp.finish))
+    local nChunks = math.ceil(#imp.finish / METADATA_CHUNK)
+    for ci = 1, nChunks do
+      if checkCanceled(S) then return end
+      local targets = {}
+      for _, t in ipairs(slice(imp.finish, (ci - 1) * METADATA_CHUNK + 1, ci * METADATA_CHUNK)) do
+        targets[#targets + 1] = { photo = t.photo, id = t.id, label = importFileLabel(t.f),
+                                  needTag = t.needTag, needCol = t.needCol }
+      end
+      tagImported(S, targets, col, string.format('Rescue %s: finish imports %d/%d', S.runId, ci, nChunks))
+      S.log:flush()
+      tick(S, ci, nChunks)
+      LrTasks.yield()
+    end
+  end
+
+  -- 2. new files: an IMPORT-ATTEMPT line per file is flushed, gate A adds
+  --    them, each is re-resolved by path after the gate and checked; only a
+  --    photo that passes gets an IMPORT-OK line and is tagged in gate B.
+  local todo = imp.toImport
+  if #todo == 0 then return end
+  setPhase(S, string.format('Importing %d files in place (one by one; this can take hours)', #todo))
+  local nGates = math.ceil(#todo / IMPORT_GATE)
+  for gi = 1, nGates do
+    if checkCanceled(S) then return end
+    local batch = slice(todo, (gi - 1) * IMPORT_GATE + 1, gi * IMPORT_GATE)
+    -- Resume markers first: if Lightroom quits after gate A commits, a re-run
+    -- reports these paths as uncertain instead of "already catalogued".
+    for _, f in ipairs(batch) do
+      S.log:info('IMPORT-ATTEMPT\t%s\t%s', S.runId, f.path)
+    end
+    S.log:flush()
+    if S.log.writeError then
+      inc(S, 'chunksFailed')
+      S.log:error('Import stopped before batch %s/%s: the log file cannot be written (%s); the import '
+        .. 'needs its resume markers', gi, nGates, tostring(S.log.writeError))
+      return
+    end
+    local results
+    local gateName = string.format('Rescue %s: import %d/%d', S.runId, gi, nGates)
+    local ok, gateErr = runGate(S, gateName, function()
+      results = {}
+      for _, f in ipairs(batch) do
+        local r = { f = f }
+        -- Re-check inside the gate: the user (or another import) may have
+        -- added the file since planning. Never addPhoto a catalogued file.
+        local okF, existing = LrTasks.pcall(function() return S.catalog:findPhotoByPath(f.path) end)
+        if not okF then
+          r.status, r.err = 'error', 'findPhotoByPath failed, not imported: ' .. tostring(existing)
+        elseif existing then
+          r.status, r.id = 'exists', existing.localIdentifier
+        else
+          -- Path only: stacking and the metadata/develop preset arguments
+          -- (LrC 12.5+) are not used. Equivalent to Import > "Add".
+          local okA, photo = LrTasks.pcall(function() return S.catalog:addPhoto(f.path) end)
+          if not okA then
+            r.status, r.err = 'error', tostring(photo)
+          else
+            local okId, id = LrTasks.pcall(function() return photo and photo.localIdentifier end)
+            r.id = okId and id or nil
+            if photo == nil or r.id == nil then
+              -- No error but no usable photo: decided by the path lookup below.
+              r.status, r.err = 'unconfirmed', 'addPhoto returned ' .. tostring(photo) .. ' without an id'
+            else
+              r.status = 'added'
+            end
+          end
+        end
+        results[#results + 1] = r
+      end
+    end)
+
+    if not ok then
+      -- The gate's changes should be rolled back. Do not trust that blindly:
+      -- report any of these files that is now in the catalog, but do not tag
+      -- it (we cannot prove this run added it). The IMPORT-ATTEMPT lines make
+      -- a re-run report them again.
+      inc(S, 'chunksFailed')
+      S.log:error('Import batch %s/%s (%s files) failed: %s', gi, nGates, #batch, tostring(gateErr))
+      for _, f in ipairs(batch) do
+        local okF, p = LrTasks.pcall(function() return S.catalog:findPhotoByPath(f.path) end)
+        if okF and p then
+          inc(S, 'importUncertain')
+          S.log:warn('IMPORT-UNCERTAIN\t%s\t%s\t%s\t(in the catalog after the failed batch; not tagged)',
+            S.runId, p.localIdentifier, f.path)
+        end
+      end
+    else
+      -- Resolve every file by path after gate A has closed: changes inside a
+      -- gate take effect when it completes, and the LrPhoto / id returned by
+      -- addPhoto may not be final. Only the committed id counts. Refuse an id
+      -- that existed before the run or that another listed file already got.
+      local targets = {}
+      for _, r in ipairs(results) do
+        local label = importFileLabel(r.f)
+        if r.status == 'exists' then
+          inc(S, 'importExistedAtWrite')
+          S.log:info('IMPORT-SKIP %s: in the catalog by the time of writing (id %s); not touched', label, r.id)
+        else
+          local okF, p = LrTasks.pcall(function() return S.catalog:findPhotoByPath(r.f.path) end)
+          local id = okF and p and p.localIdentifier or nil
+          if r.status == 'error' then
+            inc(S, 'importFailed')
+            S.log:error('IMPORT-FAILED %s: %s', label, tostring(r.err))
+            if id then
+              inc(S, 'importUncertain')
+              S.log:warn('IMPORT-UNCERTAIN\t%s\t%s\t%s\t(addPhoto failed but the path is in the catalog; '
+                .. 'not tagged)', S.runId, id, r.f.path)
+            end
+          elseif not id then
+            inc(S, 'importFailed')
+            S.log:error('IMPORT-FAILED %s: %s; not found by path after the gate%s', label,
+              r.status == 'added' and ('addPhoto returned id ' .. tostring(r.id)) or tostring(r.err),
+              okF and '' or (' (lookup failed: ' .. tostring(p) .. ')'))
+          elseif (r.f.preIds and r.f.preIds[id]) or S.importTouched[id] then
+            inc(S, 'importUncertain')
+            S.log:error('IMPORT-REFUSED\t%s\t%s\t%s\t(path resolves to a photo that was already in the catalog '
+              .. 'or that another listed file got; not tagged)', S.runId, id, r.f.path)
+          else
+            if r.status == 'unconfirmed' then
+              S.log:warn('%s: %s, but the path now resolves to new id %s; treated as imported', label,
+                tostring(r.err), id)
+            elseif r.id ~= id then
+              S.log:warn('%s: addPhoto returned id %s, the committed photo is id %s; using the path lookup',
+                label, r.id, id)
+            end
+            inc(S, 'importAdded')
+            S.importTouched[id] = true
+            -- Resume marker: keep the format in sync with readImportLog.
+            S.log:info('IMPORT-OK\t%s\t%s\t%s', S.runId, id, r.f.path)
+            targets[#targets + 1] = { photo = p, id = id, label = label, needTag = true, needCol = col ~= nil }
+          end
+        end
+      end
+      S.log:flush()
+      tagImported(S, targets, col, string.format('Rescue %s: tag imports %d/%d', S.runId, gi, nGates))
+    end
+    S.log:flush()
+    tick(S, gi, nGates)
+    LrTasks.yield()
+  end
+end
+
+-------------------------------------------------------------------------------
 -- summary
 
 local function summaryText(S, mode)
@@ -1466,6 +2124,40 @@ local function summaryText(S, mode)
     end
     add('  Rejected photos protected: %d; photos whose current metadata could not be fully read: %d',
       c.plan_rejectedProtected, c.plan_readFailed)
+    local imp = S.import
+    if imp and not S.doImport then
+      add('')
+      add('Import: off (%d files listed, not checked)', #imp.files)
+    elseif imp and imp.toImport then
+      add('')
+      add('Import in place (%d files listed%s):', #imp.files + c.import_invalid,
+        imp.note and ('; ' .. imp.note) or '')
+      add('  Would import: %d%s', c.plan_importFiles,
+        c.import_deferred > 0 and string.format(' (max_files; %d more left for a later run)', c.import_deferred) or '')
+      add('  Already in the catalog: %d (not touched, except earlier imports of this run: %d tags, %d collection adds)',
+        c.import_alreadyCataloged, c.plan_importFinishTags, c.plan_importFinishCols)
+      add('  Missing on disk: %d; folders listed as files: %d; invalid paths: %d',
+        c.import_missing, c.import_notFile, c.import_invalid)
+      add('  Skipped: hidden/sidecar files %d; listed twice %d; possible duplicates (case/accents) %d; '
+        .. 'JPEG next to catalogued raw %d; could not check %d', c.import_notMedia, c.import_dupInList,
+        c.import_possibleDup, c.import_jpegNextToRaw, c.import_unknown)
+      add('  Imported photos tagged Rescue role = "%s", run %s; collection: %s', E.IMPORT_ROLE, S.runId,
+        imp.colDisplay or (imp.collection and 'none needed' or 'off'))
+      if c.plan_importFiles > 0 then
+        add('  addPhoto adds one file per call and Lightroom builds previews afterwards: expect hours for '
+          .. 'thousands of files.')
+      end
+      if #imp.missing > 0 then
+        add('  Missing (first %d of %d):', math.min(5, #imp.missing), #imp.missing)
+        for i = 1, math.min(5, #imp.missing) do add('    %s', imp.missing[i]) end
+      end
+      if imp.uncertain and #imp.uncertain > 0 then
+        add('  UNCERTAIN: %d files in the catalog that an earlier run of %s tried to import but could not '
+          .. 'confirm; NOT tagged, check them by hand (IMPORT-UNCERTAIN lines in the log). First %d:',
+          #imp.uncertain, S.runId, math.min(5, #imp.uncertain))
+        for i = 1, math.min(5, #imp.uncertain) do add('    %s', imp.uncertain[i]) end
+      end
+    end
   else
     add('')
     add('Written:')
@@ -1478,6 +2170,12 @@ local function summaryText(S, mode)
       add('  "%s" copies created: %d; developed: %d; failures: %d',
         E.COPY_NAME, c.copiesCreated, c.copiesDeveloped, c.copyFailures)
       add('  Graduated filters NOT applied (logged): %d', c.plan_gradientsSkipped)
+    end
+    if S.import and S.doImport and S.import.toImport then
+      add('  Imported in place: %d; failed: %d; already catalogued at write time: %d; uncertain: %d',
+        c.importAdded, c.importFailed, c.importExistedAtWrite, c.importUncertain)
+      add('  Imported photos tagged: %d; added to "%s": %d', c.importTagged,
+        S.import.colDisplay or '(no collection)', c.importCollectionAdds)
     end
     if c.skippedChangedSincePlan > 0 then
       add('  Writes skipped because the photo changed since planning: %d (see SKIP lines in the log)',
@@ -1512,13 +2210,14 @@ local function plannedChangeCount(S)
   local c = S.c
   return c.plan_keywordAssignments + c.plan_ratingsRaised + c.plan_picks + c.plan_labels
     + c.plan_titles + c.plan_captions + c.plan_collectionAdds + c.plan_copiesToCreate + c.plan_copiesToComplete
+    + c.plan_importFiles + c.plan_importFinishTags + c.plan_importFinishCols
 end
 
 -------------------------------------------------------------------------------
 -- entry point
 --
--- opts: manifest (decoded table), dryRun, doDevelop, log, util, json,
---       progress (LrProgressScope), plugin (_PLUGIN),
+-- opts: manifest (decoded table), dryRun, doDevelop, doImport, log, logPath,
+--       util, json, progress (LrProgressScope), plugin (_PLUGIN),
 --       confirm(planText) -> boolean   (called only for real runs)
 -- Returns { ok = bool, text = summary, dryRun = bool }
 
@@ -1526,12 +2225,13 @@ function E.run(opts)
   local S = {
     U = opts.util, json = opts.json, log = opts.log, progress = opts.progress, plugin = opts.plugin,
     catalog = LrApplication.activeCatalog(), dryRun = opts.dryRun, doDevelop = opts.doDevelop,
+    doImport = opts.doImport ~= false, logPath = opts.logPath,
     c = newCounter(), plans = {}, notFound = {}, loggedFallback = {},
     childrenCache = {}, kwPathCache = {},
     kwInfo = {}, kwCache = {}, kwMaxDepth = 0,
     setInfo = {}, setCache = {}, setMaxDepth = 0,
     colInfo = {}, colCache = {}, colSmart = {}, colMembers = {},
-    orphans = {},
+    orphans = {}, importFolderIdx = {}, importTouched = {},
   }
 
   local okV, err = validate(S, opts.manifest)
@@ -1539,11 +2239,16 @@ function E.run(opts)
     S.log:error('%s', err)
     return { ok = false, text = err }
   end
-  S.log:info('Mode: %s; develop suggestions: %s', S.dryRun and 'DRY RUN' or 'APPLY', S.doDevelop and 'on' or 'off')
+  S.log:info('Mode: %s; develop suggestions: %s; import: %s', S.dryRun and 'DRY RUN' or 'APPLY',
+    S.doDevelop and 'on' or 'off', S.import and (S.doImport and 'on' or 'off (option)') or 'none in manifest')
+  local doImport = S.import ~= nil and S.doImport
 
   resolvePhotos(S)
   if not S.canceled then readState(S) end
+  -- Before planStructure, so the import collection joins the structure plan.
+  if not S.canceled and doImport then planImport(S) end
   if not S.canceled then planStructure(S) end
+  if not S.canceled and doImport then planImportFinish(S) end
   if not S.canceled then planAll(S) end
 
   local planText = summaryText(S, 'plan')
@@ -1572,6 +2277,15 @@ function E.run(opts)
     if not okD then
       S.log:error('Develop phase aborted: %s', tostring(errD))
       if S.ui then LrTasks.pcall(restoreUi, S, S.ui) end
+    end
+  end
+  -- Last: the import is by far the longest phase, so the quick metadata and
+  -- develop work is committed before it starts.
+  if not S.canceled and doImport then
+    local okI, errI = LrTasks.pcall(applyImport, S)
+    if not okI then
+      inc(S, 'chunksFailed')
+      S.log:error('Import phase aborted: %s (re-running the same manifest continues it)', tostring(errI))
     end
   end
 
