@@ -23,14 +23,6 @@ python3 -m venv --system-site-packages .venv
 brew install exiftool
 ```
 
-## Findings so far (2026-10-05 audit)
-
-- 246,017 images in the catalog. Only 150 have keywords.
-- 2,242 originals show as missing. 2,082 of them are verified copies on other drives:
-  - `~/Pictures/2020` → `H DRIVE/Pictures/2020`
-  - a broken nested 2019 import, whose files already exist on Y, L and P
-- The attached drives hold about 1.6M media files. The catalog indexes about 15% of them.
-
 ## Roadmap
 
 1. Thumbnail cache built from Lightroom's preview cache, plus the JPEGs embedded in RAW files
