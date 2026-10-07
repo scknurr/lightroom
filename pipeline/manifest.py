@@ -19,6 +19,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--year', default='2019')
     ap.add_argument('--run-id')
+    ap.add_argument('--label', help='collection label, e.g. "Protests" (default: the year)')
     args = ap.parse_args()
     y = args.year
     editor = json.loads((WORK / f'editor_{y}.json').read_text())
@@ -30,9 +31,14 @@ def main():
             series_of.setdefault(iid, []).append(s['name'])
 
     db = work_db()
-    rows = db.execute('''SELECT i.image_id, i.uuid, i.path, s.tier, s.private, c.tags, c.sensitive
-                         FROM selection s JOIN images i USING(image_id) JOIN clip c USING(image_id)
-                         WHERE i.year=?''', (y,)).fetchall()
+    ids = list(by_id)
+    rows = []
+    for k in range(0, len(ids), 900):
+        chunk = ids[k:k + 900]
+        rows += db.execute(f'''SELECT i.image_id, i.uuid, i.path, s.tier, s.private, c.tags, c.sensitive
+                               FROM selection s JOIN images i USING(image_id) JOIN clip c USING(image_id)
+                               WHERE i.image_id IN ({",".join("?" * len(chunk))})''', chunk).fetchall()
+    label = args.label or y
     photos = []
     counts = {}
     # Editor verdicts govern: a frame an editor reviewed is included (or skipped) on their call,
@@ -53,9 +59,9 @@ def main():
         kws += [f'Rescue|Tags|{clean(k.lower())}' for k in e.get('keywords', [])]
         cols = []
         if private:
-            cols.append(f'Private/{y}')
+            cols.append(f'Private/{label}')
         else:
-            cols.append(f'Heroes/{y}' if verdict == 'portfolio' else f'Backstock/{y}')
+            cols.append(f'Heroes/{label}' if verdict == 'portfolio' else f'Backstock/{label}')
             cols += [f'Series/{clean(n)}' for n in series_of.get(iid, [])]
             uses = set(e.get('uses', []))
             if 'stock' in uses and e.get('people') in LICENSE_OK_PEOPLE and not e.get('minors'):
