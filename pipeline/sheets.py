@@ -53,6 +53,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--year', default='2019')
     ap.add_argument('--tiers', default='hero,select')
+    ap.add_argument('--suffix', default='', help='name suffix for an incremental batch, e.g. "b"')
     args = ap.parse_args()
     SHEETS.mkdir(parents=True, exist_ok=True)
     db = work_db()
@@ -60,9 +61,13 @@ def main():
     rows = db.execute(f'''SELECT s.image_id FROM selection s JOIN images i USING(image_id)
                           WHERE i.year=? AND s.tier IN ({",".join("?" * len(tiers))})
                           ORDER BY i.capture_time''', [args.year, *tiers]).fetchall()
-    ids = [r[0] for r in rows]
-    sheets = [build(ids[i:i + 9], f'{args.year}_{i // 9:04d}') for i in range(0, len(ids), 9)]
-    out = WORK / f'sheets_{args.year}.json'
+    done = set()
+    for f in WORK.glob(f'editor_{args.year}*.json'):
+        done |= {p['image_id'] for p in json.loads(f.read_text())['photos']}
+    ids = [r[0] for r in rows if r[0] not in done]
+    tag = f'{args.year}{args.suffix}'
+    sheets = [build(ids[i:i + 9], f'{tag}_{i // 9:04d}') for i in range(0, len(ids), 9)]
+    out = WORK / f'sheets_{tag}.json'
     out.write_text(json.dumps({'style_profile': STYLE_PROFILE, 'sheets': sheets}, indent=1))
     print(f'{len(ids):,} photos -> {len(sheets)} sheets; index {out}')
 
