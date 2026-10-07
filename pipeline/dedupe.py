@@ -19,14 +19,14 @@ def main():
     ap.add_argument('--year', required=True)
     args = ap.parse_args()
     db = work_db()
-    rows = db.execute('''SELECT s.image_id, s.score, i.capture_time, c.shard, c.row, t.w > t.h
+    rows = db.execute('''SELECT s.image_id, s.score, i.capture_time, c.shard, c.row, t.w > t.h, i.rating
                          FROM selection s JOIN images i USING(image_id) JOIN clip c USING(image_id)
                          JOIN thumbs t USING(image_id)
                          WHERE i.year=? AND s.tier IN ('hero','select') AND c.shard IS NOT NULL
                          ORDER BY i.capture_time''', (args.year,)).fetchall()
     shards = {}
     vecs = []
-    for _, _, _, shard, row, _ in rows:
+    for _, _, _, shard, row, _, _ in rows:
         if shard not in shards:
             shards[shard] = np.load(WORK / 'embeddings' / f'{shard}.npy').astype(np.float32)
         vecs.append(shards[shard][row])
@@ -46,6 +46,8 @@ def main():
             if rows[j][0] in demoted or rows[j][5] != rows[i][5] or float(v[i] @ v[j]) < SIM:
                 continue
             loser = rows[j][0] if rows[i][1] >= rows[j][1] else rows[i][0]
+            if (rows[[i, j][loser == rows[j][0]]][6] or 0) >= 4:
+                continue  # never demote a frame the photographer rated 4+
             demoted.add(loser)
             if loser == rows[i][0]:
                 break

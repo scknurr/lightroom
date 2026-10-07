@@ -54,18 +54,27 @@ def main():
     ap.add_argument('--year', default='2019')
     ap.add_argument('--tiers', default='hero,select')
     ap.add_argument('--suffix', default='', help='name suffix for an incremental batch, e.g. "b"')
+    ap.add_argument('--days', help='comma-separated capture days (YYYY-MM-DD); overrides --year filter')
+    ap.add_argument('--name', help='sheet set name (default: the year)')
     args = ap.parse_args()
     SHEETS.mkdir(parents=True, exist_ok=True)
     db = work_db()
     tiers = args.tiers.split(',')
-    rows = db.execute(f'''SELECT s.image_id FROM selection s JOIN images i USING(image_id)
-                          WHERE i.year=? AND s.tier IN ({",".join("?" * len(tiers))})
-                          ORDER BY i.capture_time''', [args.year, *tiers]).fetchall()
+    if args.days:
+        days = args.days.split(',')
+        rows = db.execute(f'''SELECT s.image_id FROM selection s JOIN images i USING(image_id)
+                              WHERE substr(i.capture_time,1,10) IN ({",".join("?" * len(days))})
+                              AND s.tier IN ({",".join("?" * len(tiers))}) ORDER BY i.capture_time''',
+                          [*days, *tiers]).fetchall()
+    else:
+        rows = db.execute(f'''SELECT s.image_id FROM selection s JOIN images i USING(image_id)
+                              WHERE i.year=? AND s.tier IN ({",".join("?" * len(tiers))})
+                              ORDER BY i.capture_time''', [args.year, *tiers]).fetchall()
     done = set()
-    for f in WORK.glob(f'editor_{args.year}*.json'):
+    for f in WORK.glob(f'editor_{args.name or args.year}*.json'):
         done |= {p['image_id'] for p in json.loads(f.read_text())['photos']}
     ids = [r[0] for r in rows if r[0] not in done]
-    tag = f'{args.year}{args.suffix}'
+    tag = f'{args.name or args.year}{args.suffix}'
     sheets = [build(ids[i:i + 9], f'{tag}_{i // 9:04d}') for i in range(0, len(ids), 9)]
     out = WORK / f'sheets_{tag}.json'
     out.write_text(json.dumps({'style_profile': STYLE_PROFILE, 'sheets': sheets}, indent=1))
