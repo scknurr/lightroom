@@ -23,6 +23,7 @@ def main():
     y = args.year
     editor = json.loads((WORK / f'editor_{y}.json').read_text())
     by_id = {p['image_id']: p for p in editor['photos']}
+    ig_queue = set(editor.get('instagram_queue', []))
     series_of = {}
     for s in editor.get('series', []):
         for iid in s['members']:
@@ -55,9 +56,9 @@ def main():
             cols.append(f'Heroes/{y}' if verdict == 'portfolio' else f'Backstock/{y}')
             cols += [f'Series/{clean(n)}' for n in series_of.get(iid, [])]
             uses = set(e.get('uses', []))
-            if 'stock' in uses and e.get('people') in LICENSE_OK_PEOPLE:
+            if 'stock' in uses and e.get('people') in LICENSE_OK_PEOPLE and not e.get('minors'):
                 cols.append('Licensable/Candidates')
-            if 'instagram' in uses and verdict == 'portfolio':
+            if iid in ig_queue:
                 cols.append('Instagram/Queue')
         rec = {
             'uuid': uuid, 'image_id': iid, 'path': path,
