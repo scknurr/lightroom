@@ -5,7 +5,7 @@ AUDIT = REPO / '2026-10-05'
 SNAPSHOT = AUDIT / 'catalog-audit-snapshot.sqlite'
 PREVIEWS = Path('/Volumes/Y DRIVE/TOTAL/TOTAL-v13-3 Previews.lrdata')
 
-WORK = Path('/Volumes/G DRIVE/LR-RESCUE')
+WORK = Path('/Volumes/G DRIVE/LR-RESCUE.noindex')
 DB = WORK / 'rescue.sqlite'
 THUMBS = WORK / 'thumbs'
 THUMB_LONG = 1440

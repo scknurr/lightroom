@@ -5,11 +5,14 @@ import re
 import struct
 import subprocess
 import sys
-from multiprocessing import Pool
+from multiprocessing.pool import ThreadPool as Pool
 
 from PIL import Image
 
-from config import PREVIEWS, THUMB_LONG, thumb_path, work_db
+from config import PREVIEWS, REPO, THUMB_LONG, thumb_path, work_db
+
+sys.path.insert(0, str(REPO))
+from build_thumbs import raw_embedded_jpeg  # noqa: E402
 
 Image.MAX_IMAGE_PIXELS = None
 RASTER = {'JPG', 'PNG', 'TIFF', 'PSD'}
@@ -61,16 +64,18 @@ def from_lrprev(uuid, digest):
 def from_original(path, fmt):
     if fmt in RASTER:
         im = Image.open(path)
+        im.draft('RGB', (THUMB_LONG, THUMB_LONG))
         src = 'original'
     else:
-        data = b''
-        for tag in RAW_TAGS:
+        data = raw_embedded_jpeg(path) or b''
+        for tag in ([] if data[:2] == b'\xff\xd8' and len(data) > 50_000 else RAW_TAGS):
             data = subprocess.run(['exiftool', '-b', tag, path], capture_output=True, timeout=60).stdout
             if data[:2] == b'\xff\xd8' and len(data) > 50_000:
                 break
         if data[:2] != b'\xff\xd8':
             raise ValueError('no embedded jpeg')
         im = Image.open(io.BytesIO(data))
+        im.draft('RGB', (THUMB_LONG, THUMB_LONG))
         src = 'raw_embedded'
     im = im.convert('RGB')
     im.thumbnail((THUMB_LONG, THUMB_LONG), Image.LANCZOS)
