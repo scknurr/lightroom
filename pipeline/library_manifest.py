@@ -99,8 +99,9 @@ def main():
 
     manifest = {'version': 1, 'run_id': args.run_id, 'collection_set': 'Rescue', 'photos': photos}
     if not args.no_import:
-        files = json.loads((WORK / 'import_list.json').read_text())
-        manifest['import'] = {'folder_note': 'Own-camera photos that were never cataloged (Pixel 5 roll, G DRIVE project folders). Added in place.',
+        src = WORK / 'import_list_all.json'
+        files = json.loads((src if src.exists() else WORK / 'import_list.json').read_text())
+        manifest['import'] = {'folder_note': 'Own-camera photos that were never cataloged (Pixel 5 roll, G DRIVE project folders, Dropbox/Documents shoots). Added in place.',
                               'files': sorted(files)}
     out = WORK / 'manifest_library.json'
     out.write_text(json.dumps(manifest, separators=(',', ':')))
