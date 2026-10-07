@@ -32,9 +32,11 @@ def main():
     db = work_db()
     rows = db.execute('''SELECT i.image_id, i.uuid, i.path, s.tier, s.private, c.tags, c.sensitive
                          FROM selection s JOIN images i USING(image_id) JOIN clip c USING(image_id)
-                         WHERE i.year=? AND s.tier IN ('hero','select')''', (y,)).fetchall()
+                         WHERE i.year=?''', (y,)).fetchall()
     photos = []
     counts = {}
+    # Editor verdicts govern: a frame an editor reviewed is included (or skipped) on their call,
+    # even if a later dedupe moved its model tier.
     for iid, uuid, path, tier, private_flag, tags, sensitive in rows:
         e = by_id.get(iid)
         if e is None:

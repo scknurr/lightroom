@@ -11,5 +11,6 @@ $PY -W ignore -u embed.py --batch 48
 $PY -W ignore -u privacy.py
 $PY -u taste.py
 $PY -u select_best.py $yargs
+for y in $YEARS; do $PY -u dedupe.py --year $y; done
 for y in $YEARS; do $PY -u review.py --year $y --out "/Volumes/G DRIVE/LR-RESCUE.noindex/review_$y.html"; done
 echo PIPELINE_DONE
