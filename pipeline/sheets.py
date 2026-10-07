@@ -71,7 +71,7 @@ def main():
                               WHERE i.year=? AND s.tier IN ({",".join("?" * len(tiers))})
                               ORDER BY i.capture_time''', [args.year, *tiers]).fetchall()
     done = set()
-    for f in WORK.glob(f'editor_{args.name or args.year}*.json'):
+    for f in WORK.glob('editor_*.json'):
         done |= {p['image_id'] for p in json.loads(f.read_text())['photos']}
     ids = [r[0] for r in rows if r[0] not in done]
     tag = f'{args.name or args.year}{args.suffix}'
