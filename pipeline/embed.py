@@ -107,7 +107,7 @@ def main():
                 k = int(np.argmax(pp[1:])) + 1
                 rows.append((iid, score[i], CATEGORIES['junk'][j], float(1 - jp[0]), json.dumps(tags), None, None,
                              CATEGORIES['privacy'][k], float(1 - pp[0])))
-            db.executemany('INSERT OR REPLACE INTO clip VALUES (?,?,?,?,?,?,?,?,?)', rows)
+            db.executemany('INSERT OR REPLACE INTO clip (image_id, aesthetic, junk, junk_p, tags, shard, row, sensitive, sensitive_p) VALUES (?,?,?,?,?,?,?,?,?)', rows)
             db.commit()
             shard_vecs.append(e.cpu().numpy())
             shard_ids.extend(bid)
