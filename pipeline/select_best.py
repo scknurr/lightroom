@@ -103,9 +103,9 @@ def main():
                       or (r[14] or 0) >= PRIVATE_DOCUMENT)
         out.append((iid, float(score[i]), t, ','.join(reasons[iid]), r[5], burst_size[r[5]], private))
 
-    db.execute('DROP TABLE IF EXISTS selection')
-    db.execute('''CREATE TABLE selection (image_id INTEGER PRIMARY KEY, score REAL, tier TEXT, reasons TEXT,
-                  burst INTEGER, burst_size INTEGER, private INTEGER)''')
+    db.execute('''CREATE TABLE IF NOT EXISTS selection (image_id INTEGER PRIMARY KEY, score REAL, tier TEXT,
+                  reasons TEXT, burst INTEGER, burst_size INTEGER, private INTEGER)''')
+    db.executemany('DELETE FROM selection WHERE image_id=?', [(r[0],) for r in rows])
     db.executemany('INSERT OR REPLACE INTO selection VALUES (?,?,?,?,?,?,?)', out)
     db.commit()
     from collections import Counter
