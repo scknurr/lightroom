@@ -7,14 +7,19 @@ import subprocess
 import sys
 from multiprocessing import Pool
 
-from PIL import Image, ImageOps
+from PIL import Image
 
 from config import PREVIEWS, THUMB_LONG, thumb_path, work_db
 
 Image.MAX_IMAGE_PIXELS = None
 RASTER = {'JPG', 'PNG', 'TIFF', 'PSD'}
 RAW_TAGS = ['-JpgFromRaw', '-PreviewImage', '-OtherImage']
-ROTATE = {'3': 180, '6': 270, '8': 90}
+# Lightroom catalog orientation codes, relative to the stored pixels (previews, embedded JPEGs and originals alike).
+ORIENT = {
+    'BC': Image.Transpose.ROTATE_270, 'CD': Image.Transpose.ROTATE_180, 'DA': Image.Transpose.ROTATE_90,
+    'BA': Image.Transpose.FLIP_LEFT_RIGHT, 'CB': Image.Transpose.TRANSVERSE,
+    'DC': Image.Transpose.FLIP_TOP_BOTTOM, 'AD': Image.Transpose.TRANSPOSE,
+}
 
 
 def from_lrprev(uuid, digest):
@@ -55,7 +60,7 @@ def from_lrprev(uuid, digest):
 
 def from_original(path, fmt):
     if fmt in RASTER:
-        im = ImageOps.exif_transpose(Image.open(path))
+        im = Image.open(path)
         src = 'original'
     else:
         data = b''
@@ -66,10 +71,6 @@ def from_original(path, fmt):
         if data[:2] != b'\xff\xd8':
             raise ValueError('no embedded jpeg')
         im = Image.open(io.BytesIO(data))
-        orient = subprocess.run(['exiftool', '-n', '-s3', '-Orientation', path],
-                                capture_output=True, text=True, timeout=30).stdout.strip()
-        if orient in ROTATE:
-            im = im.rotate(ROTATE[orient], expand=True)
         src = 'raw_embedded'
     im = im.convert('RGB')
     im.thumbnail((THUMB_LONG, THUMB_LONG), Image.LANCZOS)
@@ -78,8 +79,17 @@ def from_original(path, fmt):
     return buf.getvalue(), im.size, src
 
 
+def orient(data, size, code):
+    if code not in ORIENT:
+        return data, size
+    im = Image.open(io.BytesIO(data)).convert('RGB').transpose(ORIENT[code])
+    buf = io.BytesIO()
+    im.save(buf, 'JPEG', quality=88)
+    return buf.getvalue(), im.size
+
+
 def work(row):
-    iid, fmt, path, state, puuid, pdig = row
+    iid, fmt, path, state, puuid, pdig, code = row
     out = thumb_path(iid)
     try:
         if fmt == 'VIDEO':
@@ -94,7 +104,8 @@ def work(row):
             if state == 'missing':
                 return iid, 'fail', None, None, 'original missing'
             result = from_original(path, fmt)
-        data, (w, h), src = result
+        data, size, src = result
+        data, (w, h) = orient(data, size, code)
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_bytes(data)
         return iid, src, w, h, ''
@@ -109,7 +120,7 @@ def main():
     args = ap.parse_args()
     db = work_db()
     db.execute('CREATE TABLE IF NOT EXISTS thumbs (image_id INTEGER PRIMARY KEY, source TEXT, w INTEGER, h INTEGER, error TEXT)')
-    q = '''SELECT image_id, format, path, path_state, preview_uuid, preview_digest FROM images
+    q = '''SELECT image_id, format, path, path_state, preview_uuid, preview_digest, orientation FROM images
            WHERE image_id NOT IN (SELECT image_id FROM thumbs WHERE source != 'fail')'''
     params = []
     if args.year:

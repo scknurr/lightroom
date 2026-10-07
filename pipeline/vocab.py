@@ -39,6 +39,11 @@ CATEGORIES = {
         'an accidental photo of the ground', 'a blurry out of focus photo', 'a completely dark photo',
         'a photo of a computer monitor', 'a meme or graphic', 'a test shot of a gray card or color chart',
     ],
+    'privacy': [
+        'a photo suitable for sharing publicly', 'nudity or an intimate photo', 'a person in underwear or lingerie',
+        'a private bedroom selfie', 'a photo of an identity document or credit card', 'a medical photo',
+    ],
 }
 
 PROMPT = 'a photo of {}'
+SKIP_TAG_CATEGORIES = {'junk', 'privacy'}

@@ -10,7 +10,7 @@ from PIL import Image
 from torch.utils.data import DataLoader, Dataset
 
 from config import WORK, thumb_path, work_db
-from vocab import CATEGORIES, PROMPT
+from vocab import CATEGORIES, PROMPT, SKIP_TAG_CATEGORIES
 
 warnings.filterwarnings('ignore')
 MODELS = WORK / 'models'
@@ -63,7 +63,7 @@ def main():
 
     db = work_db()
     db.execute('''CREATE TABLE IF NOT EXISTS clip (image_id INTEGER PRIMARY KEY, aesthetic REAL, junk TEXT,
-                  junk_p REAL, tags TEXT, shard TEXT, row INTEGER)''')
+                  junk_p REAL, tags TEXT, shard TEXT, row INTEGER, sensitive TEXT, sensitive_p REAL)''')
     ids = [r[0] for r in db.execute('''SELECT image_id FROM thumbs WHERE source NOT IN ('fail','skip_video')
                                        AND image_id NOT IN (SELECT image_id FROM clip) ORDER BY image_id''')]
     print(f'{len(ids):,} to embed on {dev}', flush=True)
@@ -97,14 +97,17 @@ def main():
             for i, iid in enumerate(bid):
                 tags = {}
                 for cat, p in probs.items():
-                    if cat == 'junk':
+                    if cat in SKIP_TAG_CATEGORIES:
                         continue
                     order = np.argsort(-p[i])[:3]
                     tags[cat] = [[CATEGORIES[cat][j], round(float(p[i][j]), 3)] for j in order if p[i][j] > 0.08]
                 jp = probs['junk'][i]
                 j = int(np.argmax(jp))
-                rows.append((iid, score[i], CATEGORIES['junk'][j], float(1 - jp[0]), json.dumps(tags), None, None))
-            db.executemany('INSERT OR REPLACE INTO clip VALUES (?,?,?,?,?,?,?)', rows)
+                pp = probs['privacy'][i]
+                k = int(np.argmax(pp[1:])) + 1
+                rows.append((iid, score[i], CATEGORIES['junk'][j], float(1 - jp[0]), json.dumps(tags), None, None,
+                             CATEGORIES['privacy'][k], float(1 - pp[0])))
+            db.executemany('INSERT OR REPLACE INTO clip VALUES (?,?,?,?,?,?,?,?,?)', rows)
             db.commit()
             shard_vecs.append(e.cpu().numpy())
             shard_ids.extend(bid)

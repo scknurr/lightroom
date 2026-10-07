@@ -12,6 +12,8 @@ BLUR_HARD = 18.0
 BLUR_SOFT = 45.0
 HERO_FRACTION = 0.015
 SELECT_FRACTION = 0.10
+# Conservative: false positives only keep a photo out of public sets; it stays a personal keeper.
+PRIVATE_THRESHOLD = 0.35
 
 
 def z(values):
@@ -34,7 +36,7 @@ def main():
         params = args.year
     rows = db.execute(f'''
         SELECT i.image_id, t.sharp_top3, t.luma, t.clip_dark, t.clip_bright, t.burst,
-               c.aesthetic, c.taste, c.junk, c.junk_p, i.pick, i.rating
+               c.aesthetic, c.taste, c.junk, c.junk_p, i.pick, i.rating, c.sensitive_p
         FROM images i JOIN technical t USING(image_id) JOIN clip c USING(image_id) {where}''', params).fetchall()
     if not rows:
         print('nothing scored yet')
@@ -91,14 +93,16 @@ def main():
             t = 'burst_alt'
         if t != 'reject' and r[1] < BLUR_SOFT:
             reasons[iid].append('soft')
-        out.append((iid, float(score[i]), t, ','.join(reasons[iid]), r[5], burst_size[r[5]]))
+        private = int((r[12] or 0) > PRIVATE_THRESHOLD)
+        out.append((iid, float(score[i]), t, ','.join(reasons[iid]), r[5], burst_size[r[5]], private))
 
-    db.execute('''CREATE TABLE IF NOT EXISTS selection (image_id INTEGER PRIMARY KEY, score REAL, tier TEXT,
-                  reasons TEXT, burst INTEGER, burst_size INTEGER)''')
-    db.executemany('INSERT OR REPLACE INTO selection VALUES (?,?,?,?,?,?)', out)
+    db.execute('DROP TABLE IF EXISTS selection')
+    db.execute('''CREATE TABLE selection (image_id INTEGER PRIMARY KEY, score REAL, tier TEXT, reasons TEXT,
+                  burst INTEGER, burst_size INTEGER, private INTEGER)''')
+    db.executemany('INSERT OR REPLACE INTO selection VALUES (?,?,?,?,?,?,?)', out)
     db.commit()
     from collections import Counter
-    print(Counter(o[2] for o in out))
+    print(Counter(o[2] for o in out), 'private-flagged:', sum(o[6] for o in out))
 
 
 if __name__ == '__main__':
