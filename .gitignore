@@ -1,0 +1,12 @@
+# Audit outputs: catalog snapshot (GBs) and reports containing personal file paths
+20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]/
+*.sqlite
+*.sqlite-*
+*.lrcat
+*.lrcat-*
+*.lrprev
+
+.venv/
+__pycache__/
+*.pyc
+.DS_Store

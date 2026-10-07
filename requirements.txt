@@ -1,0 +1,7 @@
+numpy<2
+pillow
+opencv-python-headless<4.11
+imagehash
+open_clip_torch
+scikit-learn
+torch
