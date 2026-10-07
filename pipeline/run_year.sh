@@ -5,7 +5,7 @@ cd "$(dirname "$0")"
 PY=../.venv/bin/python
 YEARS=("$@")
 yargs=(); for y in $YEARS; do yargs+=(--year $y); done
-$PY -u thumbs.py $yargs --workers ${THUMB_WORKERS:-6}
+$PY -u thumbs.py $yargs --workers ${THUMB_WORKERS:-8}
 $PY -u technical.py --workers 14
 $PY -W ignore -u embed.py --batch 48
 $PY -W ignore -u privacy.py

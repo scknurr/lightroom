@@ -23,6 +23,11 @@ def main():
         if fid not in relink or rank < relink[fid][0]:
             relink[fid] = (rank, r['hit_path'])
 
+    fsize = {}
+    for fid, h in cat.execute('SELECT id_local, importHash FROM AgLibraryFile'):
+        tail = (h or '').rsplit(':', 1)[-1]
+        if tail.isdigit():
+            fsize[fid] = int(tail)
     hist = dict(cat.execute('SELECT image, COUNT(*) FROM Adobe_libraryImageDevelopHistoryStep GROUP BY image'))
     faces = dict(cat.execute('SELECT image, COUNT(*) FROM AgLibraryFace WHERE regionType=1 OR regionType IS NULL GROUP BY image'))
     exif = {r[0]: r[1:] for r in cat.execute('''
@@ -52,7 +57,7 @@ def main():
         e = exif.get(iid, (None,) * 9)
         rows.append((iid, uuid, fid, cap, (cap or '')[:4], fmt, pick or 0, rating or 0, w, h, orient,
                      path, path_state, pv[0] if pv else None, pv[1] if pv else None,
-                     hist.get(iid, 0), faces.get(iid, 0), *e))
+                     hist.get(iid, 0), faces.get(iid, 0), *e, fsize.get(fid)))
         stats[path_state] += 1
         stats['with_preview'] += bool(pv)
 
@@ -65,10 +70,10 @@ def main():
             path TEXT, path_state TEXT, preview_uuid TEXT, preview_digest TEXT,
             history_steps INTEGER, faces INTEGER,
             camera TEXT, lens TEXT, focal REAL, aperture REAL, shutter REAL, iso REAL,
-            has_gps INTEGER, lat REAL, lon REAL);
+            has_gps INTEGER, lat REAL, lon REAL, file_size INTEGER);
         CREATE INDEX images_year ON images(year);
         CREATE INDEX images_time ON images(capture_time);''')
-    db.executemany(f'INSERT INTO images VALUES ({",".join("?" * 26)})', rows)
+    db.executemany(f'INSERT INTO images VALUES ({",".join("?" * 27)})', rows)
     db.commit()
     print(f'{len(rows):,} master images', dict(stats))
 

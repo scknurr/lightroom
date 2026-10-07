@@ -1,6 +1,7 @@
 """Extract ~1440px JPEG thumbnails: Lightroom preview cache first, else the original (embedded RAW JPEG)."""
 import argparse
 import io
+import os
 import re
 import struct
 import subprocess
@@ -93,8 +94,31 @@ def orient(data, size, code):
     return buf.getvalue(), im.size
 
 
+MIRRORS = [('/Volumes/Y DRIVE/', ('/Volumes/L Drive/', '/Volumes/P DRIVE/'))]
+
+
+def fastest_copy(path, size=None):
+    # Y DRIVE's older regions read at ~4 MB/s; L/P mirror the same tree at ~150 MB/s.
+    # Compare against the catalog's recorded size so the slow drive isn't touched at all.
+    for prefix, mirrors in MIRRORS:
+        if path.startswith(prefix):
+            if size is None:
+                try:
+                    size = os.stat(path).st_size
+                except OSError:
+                    pass
+            for m in mirrors:
+                alt = m + path[len(prefix):]
+                try:
+                    if size is None or os.stat(alt).st_size == size:
+                        return alt
+                except OSError:
+                    continue
+    return path
+
+
 def work(row):
-    iid, fmt, path, state, puuid, pdig, code = row
+    iid, fmt, path, state, puuid, pdig, code, fsize = row
     out = thumb_path(iid)
     try:
         if fmt == 'VIDEO':
@@ -108,7 +132,7 @@ def work(row):
         if result is None:
             if state == 'missing':
                 return iid, 'fail', None, None, 'original missing'
-            result = from_original(path, fmt)
+            result = from_original(fastest_copy(path, fsize), fmt)
         data, size, src = result
         data, (w, h) = orient(data, size, code)
         out.parent.mkdir(parents=True, exist_ok=True)
@@ -125,7 +149,7 @@ def main():
     args = ap.parse_args()
     db = work_db()
     db.execute('CREATE TABLE IF NOT EXISTS thumbs (image_id INTEGER PRIMARY KEY, source TEXT, w INTEGER, h INTEGER, error TEXT)')
-    q = '''SELECT image_id, format, path, path_state, preview_uuid, preview_digest, orientation FROM images
+    q = '''SELECT image_id, format, path, path_state, preview_uuid, preview_digest, orientation, file_size FROM images
            WHERE image_id NOT IN (SELECT image_id FROM thumbs WHERE source != 'fail')'''
     params = []
     if args.year:
