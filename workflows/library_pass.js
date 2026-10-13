@@ -106,6 +106,7 @@ ${JSON.stringify(ed.photos)}`, { label: `critic:${x.name}:${b[0]}`, phase: 'Crit
 const ok = results.filter(Boolean)
 const failed = batches.filter((_, i) => !results[i]).map(x => `${x.name}:${x.b[0]}`)
 if (failed.length) log(`WARNING: batches with no result: ${failed.join(', ')}`)
-const photos = ok.flatMap((r, i) => r.photos)
-log(`${photos.length} photos edited; ${ok.reduce((n, r) => n + r.corrections.length, 0)} critic corrections`)
-return { photos, corrections: ok.flatMap(r => r.corrections), failed_batches: failed }
+// Return per-batch groups: the workflow VM caps any single array at 4096 entries.
+const nPhotos = ok.reduce((n, r) => n + r.photos.length, 0)
+log(`${nPhotos} photos edited; ${ok.reduce((n, r) => n + r.corrections.length, 0)} critic corrections`)
+return { batches: ok.map(r => ({ photos: r.photos, corrections: r.corrections })), failed_batches: failed }

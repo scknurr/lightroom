@@ -16,6 +16,11 @@ def main():
     args = ap.parse_args()
     raw = json.load(open(args.result_json))
     new = raw.get('result', raw)
+    if 'batches' in new:  # library_pass format: per-batch groups
+        new = {'photos': [p for b in new['batches'] for p in b['photos']],
+               'corrections': [c for b in new['batches'] for c in b['corrections']],
+               'failed_batches': new.get('failed_batches', []),
+               'series': [], 'instagram_queue': [], 'notes': []}
     path = WORK / f'editor_{args.year}.json'
     old = json.loads(path.read_text()) if path.exists() else {'photos': [], 'corrections': []}
     by = {p['image_id']: p for p in old['photos']}
@@ -25,7 +30,9 @@ def main():
         'photos': list(by.values()),
         'corrections': old.get('corrections', []) + new.get('corrections', []),
         'failed_batches': new.get('failed_batches', []),
-        'series': new['series'], 'instagram_queue': new['instagram_queue'], 'notes': new['notes'],
+        'series': new['series'] or old.get('series', []),
+        'instagram_queue': new['instagram_queue'] or old.get('instagram_queue', []),
+        'notes': new['notes'] or old.get('notes', []),
     }
     path.write_text(json.dumps(merged, indent=1))
     print(f'{len(merged["photos"])} photos, {len(merged["series"])} series -> {path}')

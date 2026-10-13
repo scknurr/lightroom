@@ -37,12 +37,21 @@ def main():
         ig_queue += [i for i in e.get('instagram_queue', []) if i not in ig_queue]
     cur = WORK / 'curation_library.json'
     if cur.exists():
+        # Library curation: year-level series nested under library-wide themes -> Themes/<Theme>/<Series>.
         c = json.loads(cur.read_text())
+        themes_of = {}
+        for col in c.get('collections', []):
+            for sname in col['series']:
+                themes_of.setdefault(sname, []).append(col['name'])
         series_of = {}
         for s in c['series']:
-            for iid in s['members']:
-                series_of.setdefault(iid, set()).add(s['name'])
+            for theme in themes_of.get(s['name'], ['Other']):
+                for iid in s['members']:
+                    series_of.setdefault(iid, set()).add(f'{clean(theme)}/{clean(s["name"])}')
         ig_queue = c.get('instagram_queue', ig_queue)
+        series_prefix = 'Themes'
+    else:
+        series_prefix = 'Series'
     ig = set(ig_queue)
 
     db = work_db()
@@ -75,7 +84,8 @@ def main():
                 rec['color_label'] = 'purple'
             else:
                 rec['collections'] = ['Portfolio' if verdict == 'portfolio' else 'Backstock']
-                rec['collections'] += [f'Series/{clean(n)}' for n in sorted(series_of.get(iid, []))]
+                rec['collections'] += [f'{series_prefix}/{n}' if '/' in n else f'{series_prefix}/{clean(n)}'
+                                       for n in sorted(series_of.get(iid, []))]
                 if 'stock' in e.get('uses', []) and e.get('people') in LICENSE_OK_PEOPLE and not e.get('minors'):
                     rec['collections'].append('Licensable')
                 if iid in ig and not e.get('minors'):
