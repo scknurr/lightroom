@@ -5,6 +5,11 @@ import sqlite3
 from config import WORK, work_db
 
 
+def jsonl(rows):
+    # One record per line so agents can page through large files with the Read tool.
+    return '[\n' + ',\n'.join(json.dumps(r, separators=(',', ':')) for r in rows) + '\n]\n'
+
+
 def main():
     db = work_db()
     meta = {iid: (y or 'undated', d) for iid, y, d in db.execute('SELECT image_id, year, substr(capture_time,1,10) FROM images')}
@@ -29,10 +34,10 @@ def main():
     for y, rows in sorted(by_year.items()):
         rows.sort(key=lambda r: r['day'])
         f = out / f'{y}.json'
-        f.write_text(json.dumps(rows, separators=(',', ':')))
+        f.write_text(jsonl(rows))
         years.append({'name': y, 'file': str(f)})
     pf = out / 'portfolio.json'
-    pf.write_text(json.dumps(portfolio, separators=(',', ':')))
+    pf.write_text(jsonl(portfolio))
     args = {'years': years, 'portfolioFile': str(pf)}
     (out / 'args.json').write_text(json.dumps(args))
     print(sum(len(v) for v in by_year.values()), 'keepers;', len(portfolio), 'portfolio;', len(years), 'years')

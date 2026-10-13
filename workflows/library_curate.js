@@ -16,7 +16,7 @@ const SERIES = { type: 'object', properties: {
 
 phase('Year curators')
 const perYear = await parallel(years.map(y => () => agent(`You are the curator for one year (${y.name}) of a photographer's archive.
-Read the JSON list of keepers at ${y.file} (records: id, v=verdict portfolio|backstock, s=editor score, theme, title, kw=keywords, people, minors, uses, day).
+Read the ENTIRE JSON list of keepers at ${y.file} - one record per line; large years exceed 2000 lines, so keep calling Read with an increasing offset until you reach the closing bracket (records: id, v=verdict portfolio|backstock, s=editor score, theme, title, kw=keywords, people, minors, uses, day).
 Build "series": coherent chunks worth presenting together (an event, place, recurring subject, or visual style). Merge editor themes that mean the same thing. Each series: name (<= 5 words, include enough context to be unique across years, e.g. "No Kings Madison 2025"), one-sentence description, members (4-120 ids), cover_id (strongest member), best_for (subset of instagram, stock, print, web). Skip one-offs. Also 2-4 short notes on this year's strongest material.`,
   { label: `curate:${y.name}`, phase: 'Year curators', schema: SERIES })))
 
@@ -24,7 +24,7 @@ const yearSeries = perYear.filter(Boolean).flatMap((r, i) => r.series.map(s => (
 log(`${yearSeries.length} year-level series`)
 
 phase('Library curator')
-const lib = await agent(`You are the head curator of a photographer's whole archive (2000-2026). Below are the year-level series (name, year, description, size, best_for). The library's portfolio frames (id, score, title, theme, year, people, minors, uses) are at ${portfolioFile} - read it.
+const lib = await agent(`You are the head curator of a photographer's whole archive (2000-2026). Below are the year-level series (name, year, description, size, best_for). The library's portfolio frames (id, s=score, title, theme, year, people, minors, uses) are at ${portfolioFile}, one per line - read ALL of it (use Read with increasing offsets; it exceeds 2000 lines).
 Produce:
 1. collections: library-wide groupings that span years (e.g. "Protests", "Dogs", "Winter", "Portraits", "Corporate Events", "Travel", "Live Music") - each with name, description, and the list of year-series names it includes (by exact name). Every year-series should belong to at least one collection; it may belong to several.
 2. instagram_queue: up to 150 portfolio image ids, sequenced as a varied, engaging feed (alternate subjects/colors/eras; never two from the same series back-to-back); exclude minors and anything not marked for instagram.
