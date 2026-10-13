@@ -87,7 +87,7 @@ def main():
                        'n': n_photos, 'np': n_port, 'cover': cover})
     themes.sort(key=lambda t: -t['np'])
     in_series = {i for s in series.values() for i in s['members']}
-    ig = [i for i in cur.get('instagram_queue', []) if i in photos]
+    ig = [i for i in ((final or {}).get('instagram_queue') or cur.get('instagram_queue', [])) if i in photos]
 
     print(f'{len(photos):,} photos on the page ({hidden_private:,} private hidden); making small thumbnails...', flush=True)
     with ThreadPoolExecutor(12) as ex:
@@ -96,6 +96,8 @@ def main():
     data = {
         'photos': list(photos.values()), 'series': list(series.values()), 'themes': themes, 'ig': ig,
         'book': [i for i in (final or {}).get('book', []) if i in photos], 'book_note': (final or {}).get('book_note', ''),
+        'pf_themes': [{'theme': t, 'note': (final or {}).get('section_notes', {}).get(t, ''), 'ids': [i for i in ids if i in photos]}
+                      for t, ids in sorted((final or {}).get('theme_order', {}).items(), key=lambda kv: -len(kv[1])) if ids],
         'notes': cur.get('notes', []), 'unsorted': [i for i in photos if i not in in_series],
         'stats': {'photos': len(photos), 'portfolio': sum(p['v'] == 'P' for p in photos.values()),
                   'series': len(series), 'themes': len(themes), 'private_hidden': hidden_private},
@@ -176,6 +178,7 @@ function renderSearch(term){const t=term.toLowerCase();const ids=sortP(D.photos.
  renderList(`Search: “${esc(term)}”`,ids,`${ids.length} matching photos, portfolio first.`)}
 function render(){const term=q.value.trim();if(term)return renderSearch(term);
  if(view==='themes')return theme===null?renderThemes():renderTheme(theme);
+ if(view==='portfolio'&&D.pf_themes.length){main.innerHTML=`<h2>Portfolio</h2><p class="desc">${D.pf_themes.reduce((n,t)=>n+t.ids.length,0)} frames, nailed down theme by theme: each section re-judged against the archive's best, deduplicated across shoots and years, and ordered best first.</p>`+D.pf_themes.map(t=>`<section class="series"><div class="head"><h3>${esc(t.theme)}</h3><span class="meta">${t.ids.length} frames</span></div><p class="desc">${esc(t.note)}</p><div class="grid">${t.ids.map(i=>tile(i)).join('')}</div></section>`).join('');return}
  if(view==='portfolio')return renderList('Portfolio',sortP(D.photos.filter(p=>p.v==='P').map(p=>p.i)),'Every portfolio frame in the library, highest editor score first.');
  if(view==='book')return D.book.length?renderList('The Book',D.book,'The flagship set, sequenced like a book. '+esc(D.book_note),true):(main.innerHTML='<p class="empty">The Book has not been chosen yet.</p>');
  if(view==='ig')return renderList('Instagram queue',D.ig,'Posting order from the head curator: varied, never two from the same series back-to-back, no minors. Confirm consent for recognizable people before posting.',true);
@@ -196,7 +199,7 @@ function open(i){const p=P.get(i);const series=D.series.filter(s=>s.members.incl
  ${series.length?`<div class="row"><b>Series:</b> ${esc(series.join(' · '))}</div>`:''}</aside><button class="x" aria-label="Close">×</button>`;
  lb.onclick=e=>{if(e.target===lb||e.target.classList.contains('x'))lb.remove()};document.body.appendChild(lb);
  const key=e=>{if(e.key==='Escape'){lb.remove();removeEventListener('keydown',key)}};addEventListener('keydown',key)}
-const h=decodeURIComponent(location.hash.slice(1));if(h.startsWith('t=')){const k=D.themes.findIndex(t=>t.name.toLowerCase().includes(h.slice(2).toLowerCase()));if(k>=0)theme=k}
+const h=decodeURIComponent(location.hash.slice(1));if(h.startsWith('v=')){view=h.slice(2);document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('on',x.dataset.v===view))}if(h.startsWith('t=')){const k=D.themes.findIndex(t=>t.name.toLowerCase().includes(h.slice(2).toLowerCase()));if(k>=0)theme=k}
 render();
 </script></body></html>'''
 

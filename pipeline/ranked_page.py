@@ -82,7 +82,8 @@ def main():
             'small': 'file://' + str(SMALL).replace(' ', '%20'), 'big': 'file://' + str(thumb_path(0).parent.parent).replace(' ', '%20')}
     out = WORK / 'ranked.html'
     out.write_text(PAGE.replace('__DATA__', json.dumps(data, separators=(',', ':')).replace('</', '<\\/')))
-    print(f'ranked {len(ranking):,}: {len(top)} by judges, {len(tier2):,} by group rank, {len(rest):,} by score -> {out}')
+    from collections import Counter
+    print(f'ranked {len(ranking):,}:', ', '.join(f'{n:,} {b}' for b, n in Counter(b for _, b in ranking).items()), f'-> {out}')
 
 
 PAGE = r'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">

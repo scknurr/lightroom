@@ -52,8 +52,10 @@ def main():
         series_prefix = 'Themes'
     else:
         series_prefix = 'Series'
-    ig = set(ig_queue)
     final = final_portfolio()
+    if final and final.get('instagram_queue'):
+        ig_queue = final['instagram_queue']
+    ig = set(ig_queue)
     book = set((final or {}).get('book', []))
     editor = {i: apply_final_verdict(i, p, final) for i, p in editor.items()}
 
