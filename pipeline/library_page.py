@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from PIL import Image
 
-from config import WORK, thumb_path, work_db
+from config import WORK, cleared_private, thumb_path, work_db
 
 SMALL = WORK / 'thumbs_small'
 SMALL_LONG = 480
@@ -42,11 +42,12 @@ def main():
         for p in json.loads(f.read_text())['photos']:
             recs[p['image_id']] = p
     photos, hidden_private = {}, 0
+    cleared = cleared_private()
     for iid, p in recs.items():
         if p['verdict'] == 'skip':
             continue
         y, d, priv = meta.get(iid, ('', '', False))
-        if p.get('private') or priv:
+        if (p.get('private') or priv) and iid not in cleared:
             hidden_private += 1
             continue
         photos[iid] = {

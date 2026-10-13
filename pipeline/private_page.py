@@ -4,7 +4,7 @@ Writes WORK/private.html. Marks are kept in the browser (localStorage) and liste
 import json
 from concurrent.futures import ThreadPoolExecutor
 
-from config import WORK, thumb_path, work_db
+from config import WORK, cleared_private, thumb_path, work_db
 from library_page import SMALL, make_small
 
 
@@ -19,8 +19,9 @@ def main():
             if p.get('private'):
                 editor[p['image_id']] = p
     items = []
+    cleared = cleared_private()
     for iid, auto, nud, und, doc, y, d, path in rows:
-        if not auto and iid not in editor:
+        if (not auto and iid not in editor) or iid in cleared:
             continue
         why = []
         if iid in editor:
@@ -67,9 +68,9 @@ main{max-width:1600px;margin:0 auto;padding:14px 16px 80px}
 </style></head><body>
 <header><div class="bar"><h1>Private Review</h1><a href="library.html">← Library</a><a href="ranked.html">Ranked</a>
 <select id="f"><option value="all">All flagged</option><option value="editor">Editor-flagged</option><option value="auto">Auto-flagged only</option><option value="low">Auto, lower confidence (&lt; 0.99)</option></select>
-<span class="count" id="cnt"></span><button id="show">Show cleared IDs</button><button id="reset">Reset marks</button></div>
+<span class="count" id="cnt"></span><button id="apply" style="border-color:#6fd39a;color:#6fd39a">Apply</button><span id="st" class="count"></span><button id="show">Show cleared IDs</button><button id="reset">Reset marks</button></div>
 <div class="bar" style="padding-top:0"><textarea id="out" readonly></textarea></div></header>
-<main><p class="help">Photos flagged private stay in your library but are kept out of Portfolio, Instagram, licensing and the galleries. Tick <b>not private</b> on any false positive, then press <b>Show cleared IDs</b> and paste the list back to Claude. Marks are saved in this browser.</p><div id="list"></div></main>
+<main><p class="help">Photos flagged private stay in your library but are kept out of Portfolio, Instagram, licensing and the galleries. Tick <b>not private</b> on any false positive (or use the per-day buttons), then press <b>Apply</b>. Applied photos leave this list and join the library, rankings and Lightroom manifest; the pages rebuild in about a minute and this page reloads itself. Marks are saved in this browser until applied.</p><div id="list"></div></main>
 <script id="data" type="application/json">__DATA__</script>
 <script>
 const D=JSON.parse(document.getElementById('data').textContent);
@@ -95,6 +96,15 @@ list.addEventListener('click',e=>{const db=e.target.closest('[data-day],[data-un
  const lb=document.createElement('div');lb.className='lb';lb.innerHTML=`<img src="${big(i)}"><div>#${i} · ${x.d} · ${x.f} · ${x.w.join(' · ')}</div>`;lb.onclick=()=>lb.remove();document.body.appendChild(lb)});
 document.getElementById('show').onclick=()=>{out.style.display='block';out.value=JSON.stringify([...cleared]);out.select()};
 document.getElementById('reset').onclick=()=>{if(cleared.size&&!window.__confirmReset){window.__confirmReset=true;document.getElementById('reset').textContent='Click again to clear all marks';return}cleared.clear();save();window.__confirmReset=false;document.getElementById('reset').textContent='Reset marks';render()};
+const API='http://127.0.0.1:8765/api', st=document.getElementById('st');
+document.getElementById('apply').onclick=async()=>{if(!cleared.size){st.textContent='Nothing marked yet.';return}
+ st.textContent=`Applying ${cleared.size}…`;
+ try{const r=await fetch(API+'/private-cleared',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids:[...cleared]})});
+  const j=await r.json();if(!r.ok)throw new Error(j.error||r.status);
+  st.textContent=`Applied (${j.cleared.toLocaleString()} cleared in total). Rebuilding pages…`;
+  const poll=async()=>{try{const s=await (await fetch(API+'/status')).json();if(s.building){setTimeout(poll,2500);return}
+   if(s.error){st.textContent='Rebuild failed: '+s.error;return}cleared.clear();save();location.reload()}catch(e){setTimeout(poll,4000)}};setTimeout(poll,2500)}
+ catch(e){st.textContent='The local helper is not running. Ask Claude to start it, or press Show cleared IDs and paste the list.'}};
 f.onchange=render;render();
 </script></body></html>'''
 

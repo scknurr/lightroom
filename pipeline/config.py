@@ -29,3 +29,15 @@ def work_db():
 
 def thumb_path(image_id):
     return THUMBS / f'{image_id // 1000:05d}' / f'{image_id}.jpg'
+
+
+PRIVATE_OVERRIDES = WORK / 'private_overrides.json'
+
+
+def cleared_private():
+    """Photo ids the owner marked "not private" on the private review page; they override every privacy flag."""
+    import json
+    try:
+        return set(json.loads(PRIVATE_OVERRIDES.read_text())['cleared'])
+    except FileNotFoundError:
+        return set()

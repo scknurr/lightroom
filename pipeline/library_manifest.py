@@ -9,7 +9,7 @@
 import argparse
 import json
 
-from config import WORK, work_db
+from config import WORK, cleared_private, work_db
 
 LICENSE_OK_PEOPLE = {'none', 'incidental'}
 TAG_MIN = 0.30
@@ -55,6 +55,7 @@ def main():
     ig = set(ig_queue)
 
     db = work_db()
+    cleared = cleared_private()
     photos, counts = [], {}
     for iid, uuid, path, tier, reasons, private_flag, tags in db.execute('''
             SELECT i.image_id, i.uuid, i.path, s.tier, s.reasons, s.private, c.tags
@@ -71,7 +72,7 @@ def main():
         rec = {'uuid': uuid, 'image_id': iid, 'path': path, 'collections': []}
         e = editor.get(iid)
         if e and e['verdict'] != 'skip':
-            private = bool(private_flag) or e.get('private', False)
+            private = (bool(private_flag) or e.get('private', False)) and iid not in cleared
             verdict = e['verdict']
             kws |= {f'Rescue|Tags|{clean(k.lower())}' for k in e.get('keywords', [])}
             rec['rating'] = 4 if verdict == 'portfolio' else 3
@@ -97,7 +98,7 @@ def main():
                 dev['settings'] = e['treatment']['settings']
             if dev and verdict == 'portfolio' and not private:
                 rec['develop_suggestion'] = dev
-        elif private_flag:
+        elif private_flag and iid not in cleared:
             rec['collections'] = ['Private']
         if not kws and not rec['collections'] and 'rating' not in rec:
             continue
