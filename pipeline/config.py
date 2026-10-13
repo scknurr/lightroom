@@ -64,3 +64,15 @@ def apply_final_verdict(iid, p, final):
     q = dict(p)
     q['verdict'] = 'portfolio' if iid in final['portfolio_set'] else 'backstock'
     return q
+
+
+NOT_MINE = WORK / 'not_mine.json'
+
+
+def not_mine():
+    """Photo ids the owner says are not his (downloads, other photographers); excluded from every selection."""
+    import json
+    try:
+        return set(json.loads(NOT_MINE.read_text())['ids'])
+    except FileNotFoundError:
+        return set()

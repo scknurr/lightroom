@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from PIL import Image
 
-from config import WORK, apply_final_verdict, cleared_private, final_portfolio, thumb_path, work_db
+from config import WORK, apply_final_verdict, cleared_private, final_portfolio, not_mine, thumb_path, work_db
 
 SMALL = WORK / 'thumbs_small'
 SMALL_LONG = 480
@@ -45,8 +45,9 @@ def main():
     recs = {i: apply_final_verdict(i, p, final) for i, p in recs.items()}
     photos, hidden_private = {}, 0
     cleared = cleared_private()
+    foreign = not_mine()
     for iid, p in recs.items():
-        if p['verdict'] == 'skip':
+        if p['verdict'] == 'skip' or iid in foreign:
             continue
         y, d, priv = meta.get(iid, ('', '', False))
         if (p.get('private') or priv) and iid not in cleared:
@@ -151,7 +152,7 @@ h2{font-size:22px;margin:6px 0 4px}h3{font-size:16px;margin:0}.desc{color:var(--
 <header><div class="bar"><h1>Rescue Library</h1>
 <nav><button data-v="themes" class="on">Themes</button><button data-v="book">Book</button><button data-v="portfolio">Portfolio</button><button data-v="ig">Instagram queue</button><button data-v="years">By year</button></nav>
 <input type="search" id="q" placeholder="Search titles, captions, keywords…">
-<label class="tog"><input type="checkbox" id="pOnly"> Portfolio only</label><a href="ranked.html" style="color:var(--acc)">Ranked 1→N</a><a href="private.html" style="color:var(--acc)">Private review</a></div></header>
+<label class="tog"><input type="checkbox" id="pOnly"> Portfolio only</label><a href="ranked.html" style="color:var(--acc)">Ranked 1→N</a><a href="private.html" style="color:var(--acc)">Private review</a><a href="authorship.html" style="color:var(--acc)">Authorship review</a></div></header>
 <main id="main"></main>
 <script id="data" type="application/json">__DATA__</script>
 <script>

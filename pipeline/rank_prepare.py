@@ -3,7 +3,7 @@ import json
 import sqlite3
 
 import sheets
-from config import WORK, apply_final_verdict, cleared_private, final_portfolio, work_db
+from config import WORK, apply_final_verdict, cleared_private, final_portfolio, not_mine, work_db
 
 GROUP = 36
 
@@ -19,7 +19,8 @@ def keepers():
             recs[p['image_id']] = p
     final = final_portfolio()
     recs = {i: apply_final_verdict(i, p, final) for i, p in recs.items()}
-    keep = {i: p for i, p in recs.items() if p['verdict'] != 'skip' and (not p.get('private') or i in cleared) and i not in priv}
+    foreign = not_mine()
+    keep = {i: p for i, p in recs.items() if i not in foreign and p['verdict'] != 'skip' and (not p.get('private') or i in cleared) and i not in priv}
     return keep, model
 
 

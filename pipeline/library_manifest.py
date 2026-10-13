@@ -9,7 +9,7 @@
 import argparse
 import json
 
-from config import WORK, apply_final_verdict, cleared_private, final_portfolio, work_db
+from config import WORK, apply_final_verdict, cleared_private, final_portfolio, not_mine, work_db
 
 LICENSE_OK_PEOPLE = {'none', 'incidental'}
 TAG_MIN = 0.30
@@ -61,6 +61,7 @@ def main():
 
     db = work_db()
     cleared = cleared_private()
+    foreign = not_mine()
     photos, counts = [], {}
     for iid, uuid, path, tier, reasons, private_flag, tags in db.execute('''
             SELECT i.image_id, i.uuid, i.path, s.tier, s.reasons, s.private, c.tags
@@ -75,6 +76,14 @@ def main():
                 if r and r != 'soft':
                     kws.add(f'Rescue|Cull|{clean(r)}')
         rec = {'uuid': uuid, 'image_id': iid, 'path': path, 'collections': []}
+        if iid in foreign:
+            # Not the owner's photo: tag and collect for him to delete or relocate; never rate, title or publish it.
+            kws.add('Rescue|Cull|not my photo')
+            rec['collections'] = ['Not Mine']
+            rec['keywords'] = sorted(kws)
+            photos.append(rec)
+            counts['Not Mine'] = counts.get('Not Mine', 0) + 1
+            continue
         e = editor.get(iid)
         if e and e['verdict'] != 'skip':
             private = (bool(private_flag) or e.get('private', False)) and iid not in cleared

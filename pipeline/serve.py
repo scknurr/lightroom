@@ -11,7 +11,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from config import PRIVATE_OVERRIDES, WORK, cleared_private
+from config import NOT_MINE, PRIVATE_OVERRIDES, WORK, cleared_private, not_mine
 
 HERE = Path(__file__).resolve().parent
 PY = sys.executable
@@ -19,11 +19,12 @@ STATE = {'building': False, 'last': '', 'error': ''}
 LOCK = threading.Lock()
 
 
-def rebuild():
+def rebuild(steps=None):
+    steps = steps or [['private_page.py'], ['library_page.py'], ['ranked_page.py', str(WORK / 'rank' / 'finals.json')]]
     with LOCK:
         STATE.update(building=True, error='')
         try:
-            for args in (['private_page.py'], ['library_page.py'], ['ranked_page.py', str(WORK / 'rank' / 'finals.json')]):
+            for args in steps:
                 r = subprocess.run([PY, *args], cwd=HERE, capture_output=True, text=True)
                 if r.returncode:
                     raise RuntimeError(f'{args[0]}: {r.stderr[-400:]}')
@@ -58,6 +59,16 @@ class H(BaseHTTPRequestHandler):
         self._send(404, {'error': 'not found'})
 
     def do_POST(self):
+        if self.path == '/api/not-mine':
+            try:
+                n = int(self.headers.get('Content-Length', 0))
+                ids = {int(i) for i in json.loads(self.rfile.read(min(n, 5_000_000)))['ids']}
+            except Exception as e:
+                return self._send(400, {'error': f'bad request: {e}'})
+            merged = sorted(not_mine() | ids)
+            NOT_MINE.write_text(json.dumps({'ids': merged, 'updated': time.strftime('%Y-%m-%d %H:%M:%S'), 'source': 'owner, authorship review'}))
+            threading.Thread(target=rebuild, args=([['portfolio_refine.py'], ['authorship_page.py']],), daemon=True).start()
+            return self._send(200, {'ok': True, 'total': len(merged)})
         if self.path != '/api/private-cleared':
             return self._send(404, {'error': 'not found'})
         try:

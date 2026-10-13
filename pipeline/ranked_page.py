@@ -32,7 +32,7 @@ def main():
             if i in keep:
                 points[i] = points.get(i, 0) + (TOP - r)
     top = sorted(points, key=lambda i: (-points[i], pos.get(i, 1), -(model.get(i) or 0)))[:TOP]
-    tier2 = sorted((i for i in pos if i not in set(top)), key=lambda i: (pos[i], -keep[i]['editor_score'], -(model.get(i) or 0)))
+    tier2 = sorted((i for i in pos if i in keep and i not in set(top)), key=lambda i: (pos[i], -keep[i]['editor_score'], -(model.get(i) or 0)))
     used = set(top) | set(tier2)
     rest = sorted((i for i in keep if i not in used),
                   key=lambda i: (-keep[i]['editor_score'], keep[i]['verdict'] != 'portfolio', -(model.get(i) or 0)))
