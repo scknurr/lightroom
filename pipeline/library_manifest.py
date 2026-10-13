@@ -9,7 +9,7 @@
 import argparse
 import json
 
-from config import WORK, cleared_private, work_db
+from config import WORK, apply_final_verdict, cleared_private, final_portfolio, work_db
 
 LICENSE_OK_PEOPLE = {'none', 'incidental'}
 TAG_MIN = 0.30
@@ -53,6 +53,9 @@ def main():
     else:
         series_prefix = 'Series'
     ig = set(ig_queue)
+    final = final_portfolio()
+    book = set((final or {}).get('book', []))
+    editor = {i: apply_final_verdict(i, p, final) for i, p in editor.items()}
 
     db = work_db()
     cleared = cleared_private()
@@ -75,7 +78,7 @@ def main():
             private = (bool(private_flag) or e.get('private', False)) and iid not in cleared
             verdict = e['verdict']
             kws |= {f'Rescue|Tags|{clean(k.lower())}' for k in e.get('keywords', [])}
-            rec['rating'] = 4 if verdict == 'portfolio' else 3
+            rec['rating'] = 5 if iid in book else 4 if verdict == 'portfolio' else 3
             rec['pick'] = verdict == 'portfolio'
             for fld in ('title', 'caption'):
                 if e.get(fld):
@@ -84,7 +87,7 @@ def main():
                 rec['collections'] = ['Private']
                 rec['color_label'] = 'purple'
             else:
-                rec['collections'] = ['Portfolio' if verdict == 'portfolio' else 'Backstock']
+                rec['collections'] = ['Portfolio' if verdict == 'portfolio' else 'Backstock'] + (['Book'] if iid in book else [])
                 rec['collections'] += [f'{series_prefix}/{n}' if '/' in n else f'{series_prefix}/{clean(n)}'
                                        for n in sorted(series_of.get(iid, []))]
                 if 'stock' in e.get('uses', []) and e.get('people') in LICENSE_OK_PEOPLE and not e.get('minors'):

@@ -3,7 +3,7 @@ import json
 import sqlite3
 
 import sheets
-from config import WORK, cleared_private, work_db
+from config import WORK, apply_final_verdict, cleared_private, final_portfolio, work_db
 
 GROUP = 36
 
@@ -17,6 +17,8 @@ def keepers():
     for f in sorted(WORK.glob('editor_*.json')):
         for p in json.loads(f.read_text())['photos']:
             recs[p['image_id']] = p
+    final = final_portfolio()
+    recs = {i: apply_final_verdict(i, p, final) for i, p in recs.items()}
     keep = {i: p for i, p in recs.items() if p['verdict'] != 'skip' and (not p.get('private') or i in cleared) and i not in priv}
     return keep, model
 

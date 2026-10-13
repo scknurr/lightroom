@@ -7,7 +7,7 @@
 import argparse
 import json
 
-from config import WORK
+from config import WORK, final_portfolio
 from rank_prepare import keepers
 
 TOP = 60
@@ -36,7 +36,20 @@ def main():
     used = set(top) | set(tier2)
     rest = sorted((i for i in keep if i not in used),
                   key=lambda i: (-keep[i]['editor_score'], keep[i]['verdict'] != 'portfolio', -(model.get(i) or 0)))
-    ranking = [(i, 'judges') for i in top] + [(i, 'group') for i in tier2] + [(i, 'score') for i in rest]
+    final = final_portfolio()
+    if final:
+        # Nailed-down portfolio: the Book (by combined judge votes), then the rest of the final portfolio
+        # by strict-pass strength, then everything else in its previous order.
+        book = [i for i in final['book_ranked'] if i in keep and i in final['portfolio_set']]
+        bset = set(book)
+        st = {int(k): v for k, v in final['strength'].items()}
+        prev = top + tier2 + rest
+        pidx = {i: n for n, i in enumerate(prev)}
+        port = sorted((i for i in final['portfolio_set'] if i in keep and i not in bset), key=lambda i: (-st.get(i, 0), pidx.get(i, 1e9)))
+        used = bset | set(port)
+        ranking = [(i, 'book') for i in book] + [(i, 'portfolio') for i in port] + [(i, 'score') for i in prev if i not in used]
+    else:
+        ranking = [(i, 'judges') for i in top] + [(i, 'group') for i in tier2] + [(i, 'score') for i in rest]
     assert len(ranking) == len(keep) == len({i for i, _ in ranking})
     (WORK / 'ranking.json').write_text(json.dumps([{'rank': n + 1, 'image_id': i, 'basis': b} for n, (i, b) in enumerate(ranking)]))
 
@@ -55,7 +68,17 @@ def main():
                        't': p.get('title', ''), 'c': p.get('caption', ''), 'k': p.get('keywords', [])[:12], 'y': y, 'd': d,
                        'u': p.get('uses', []), 'r': p.get('release_notes', []), 'm': bool(p.get('minors')),
                        'n': (p.get('treatment') or {}).get('notes', ''), 'w': p.get('why', '')})
-    data = {'photos': photos, 'judges': [{'lens': j['lens'], 'why': j['why_first']} for j in judges],
+    labels = {'judges': ['Judges’ top 60', 'three independent judges (impact, craft, story), combined'],
+              'group': ['Judged top tier', 'ranked by eye in mixed groups of 36, by placement in group'],
+              'book': ['The Book', 'the flagship set: three judges picked from every theme’s best, votes combined'],
+              'portfolio': ['Portfolio', 'the rest of the nailed-down portfolio, by strict-pass strength'],
+              'score': ['Everything else', 'by editor score, then portfolio before backstock, then the model score']}
+    sections = []
+    for n, (_, b) in enumerate(ranking):
+        if not sections or sections[-1][1] != b:
+            sections.append([n, b])
+    data = {'sections': [[s, labels[b][0], labels[b][1], 'top' if b in ('judges', 'book') else 'g'] for s, b in sections],
+            'photos': photos, 'judges': [{'lens': j['lens'], 'why': j['why_first']} for j in judges],
             'small': 'file://' + str(SMALL).replace(' ', '%20'), 'big': 'file://' + str(thumb_path(0).parent.parent).replace(' ', '%20')}
     out = WORK / 'ranked.html'
     out.write_text(PAGE.replace('__DATA__', json.dumps(data, separators=(',', ':')).replace('</', '<\\/')))
@@ -93,9 +116,6 @@ main{max-width:1700px;margin:0 auto;padding:14px 16px 80px}
 <header><div class="bar"><h1>Ranked Library</h1><span class="mut" id="tot"></span><a href="library.html">Library</a><a href="private.html">Private review</a>
 <label class="mut">Jump to # <input id="jump" type="number" min="1"></label></div></header>
 <main><ul class="legend">
-<li><b>#1–60</b>: three independent judges (impact, craft, story) ranked the ~150 finalists; their rankings are combined.</li>
-<li><b>#61–1,504</b>: every editor 9 and portfolio 8, ranked by eye in mixed groups of 36 and ordered by where each placed in its group.</li>
-<li><b>#1,505 onward</b>: everything else, ordered by editor score, then portfolio before backstock, then the model's score.</li>
 <li id="why"></li></ul><div id="list"></div></main>
 <script id="data" type="application/json">__DATA__</script>
 <script>
@@ -106,7 +126,8 @@ const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&g
 document.getElementById('tot').textContent=`${N.toLocaleString()} photos`;
 document.getElementById('why').innerHTML='Why #1: '+D.judges.map(j=>`<i>${esc(j.lens)}</i>: ${esc(j.why)}`).join(' · ');
 const list=document.getElementById('list'); let shown=0; const PER=240;
-const SECS=[[0,'Judges’ top 60','top'],[60,'Judged top tier','g'],[1504,'Score-ordered','g']];
+const SECS=D.sections.map(s=>[s[0],s[1],s[3]]);
+document.querySelector('.legend').insertAdjacentHTML('afterbegin',D.sections.map((s,k)=>`<li><b>#${(s[0]+1).toLocaleString()}–${((D.sections[k+1]||[N])[0]).toLocaleString()} ${s[1]}</b>: ${s[2]}.</li>`).join(''));
 function tile(k){const p=D.photos[k];return `<div class="ph" data-k="${k}"><img loading="lazy" src="${sm(p.i)}" alt=""><span class="n">#${k+1}</span><div class="cap">${esc(p.t)}</div></div>`}
 let cur=null, curSec=-1;
 function more(){if(shown>=N)return;const end=Math.min(N,shown+PER);let buf=[];
@@ -121,7 +142,7 @@ document.getElementById('jump').onchange=e=>{const t=Math.max(1,Math.min(N,+e.ta
 list.onclick=e=>{const ph=e.target.closest('.ph');if(!ph)return;const k=+ph.dataset.k,p=D.photos[k];
  const lb=document.createElement('div');lb.className='lb';lb.innerHTML=`<img src="${big(p.i)}" alt=""><aside><h3>#${k+1} · ${esc(p.t)}</h3><div>${esc(p.c)}</div>
  <div class="kw">${p.k.map(x=>`<span>${esc(x)}</span>`).join('')}</div>
- <div class="row"><b>${p.v==='P'?'Portfolio':'Backstock'}</b> · editor ${p.s}/10 · ${esc(p.d||p.y)} · #${p.i} · ranked by ${p.b==='j'?'judges':p.b==='g'?'group':'score'}</div>
+ <div class="row"><b>${p.v==='P'?'Portfolio':'Backstock'}</b> · editor ${p.s}/10 · ${esc(p.d||p.y)} · #${p.i} · ranked by ${({j:'judges',g:'group',b:'the Book panel',p:'portfolio strength',s:'score'})[p.b]}</div>
  ${p.w?`<div class="row">${esc(p.w)}</div>`:''}${p.n?`<div class="row"><b>Edit:</b> ${esc(p.n)}</div>`:''}
  <div class="row"><b>Uses:</b> ${esc(p.u.join(', ')||'—')}${p.r.length?` · ${esc(p.r.join(', ').replaceAll('_',' '))}`:''}${p.m?' · <b>minors</b>':''}</div></aside><button class="x" aria-label="Close">×</button>`;
  lb.onclick=ev=>{if(ev.target===lb||ev.target.classList.contains('x'))lb.remove()};document.body.appendChild(lb);

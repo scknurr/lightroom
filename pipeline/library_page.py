@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from PIL import Image
 
-from config import WORK, cleared_private, thumb_path, work_db
+from config import WORK, apply_final_verdict, cleared_private, final_portfolio, thumb_path, work_db
 
 SMALL = WORK / 'thumbs_small'
 SMALL_LONG = 480
@@ -41,6 +41,8 @@ def main():
     for f in sorted(WORK.glob('editor_*.json')):
         for p in json.loads(f.read_text())['photos']:
             recs[p['image_id']] = p
+    final = final_portfolio()
+    recs = {i: apply_final_verdict(i, p, final) for i, p in recs.items()}
     photos, hidden_private = {}, 0
     cleared = cleared_private()
     for iid, p in recs.items():
@@ -93,6 +95,7 @@ def main():
 
     data = {
         'photos': list(photos.values()), 'series': list(series.values()), 'themes': themes, 'ig': ig,
+        'book': [i for i in (final or {}).get('book', []) if i in photos], 'book_note': (final or {}).get('book_note', ''),
         'notes': cur.get('notes', []), 'unsorted': [i for i in photos if i not in in_series],
         'stats': {'photos': len(photos), 'portfolio': sum(p['v'] == 'P' for p in photos.values()),
                   'series': len(series), 'themes': len(themes), 'private_hidden': hidden_private},
@@ -144,7 +147,7 @@ h2{font-size:22px;margin:6px 0 4px}h3{font-size:16px;margin:0}.desc{color:var(--
 .empty{color:var(--mut);padding:30px 0}
 </style></head><body>
 <header><div class="bar"><h1>Rescue Library</h1>
-<nav><button data-v="themes" class="on">Themes</button><button data-v="portfolio">Portfolio</button><button data-v="ig">Instagram queue</button><button data-v="years">By year</button></nav>
+<nav><button data-v="themes" class="on">Themes</button><button data-v="book">Book</button><button data-v="portfolio">Portfolio</button><button data-v="ig">Instagram queue</button><button data-v="years">By year</button></nav>
 <input type="search" id="q" placeholder="Search titles, captions, keywords…">
 <label class="tog"><input type="checkbox" id="pOnly"> Portfolio only</label><a href="ranked.html" style="color:var(--acc)">Ranked 1→N</a><a href="private.html" style="color:var(--acc)">Private review</a></div></header>
 <main id="main"></main>
@@ -174,6 +177,7 @@ function renderSearch(term){const t=term.toLowerCase();const ids=sortP(D.photos.
 function render(){const term=q.value.trim();if(term)return renderSearch(term);
  if(view==='themes')return theme===null?renderThemes():renderTheme(theme);
  if(view==='portfolio')return renderList('Portfolio',sortP(D.photos.filter(p=>p.v==='P').map(p=>p.i)),'Every portfolio frame in the library, highest editor score first.');
+ if(view==='book')return D.book.length?renderList('The Book',D.book,'The flagship set, sequenced like a book. '+esc(D.book_note),true):(main.innerHTML='<p class="empty">The Book has not been chosen yet.</p>');
  if(view==='ig')return renderList('Instagram queue',D.ig,'Posting order from the head curator: varied, never two from the same series back-to-back, no minors. Confirm consent for recognizable people before posting.',true);
  if(view==='years')return renderYears()}
 document.querySelector('nav').onclick=e=>{const b=e.target.closest('button');if(!b)return;document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('on',x===b));view=b.dataset.v;theme=null;q.value='';render()};

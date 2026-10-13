@@ -41,3 +41,26 @@ def cleared_private():
         return set(json.loads(PRIVATE_OVERRIDES.read_text())['cleared'])
     except FileNotFoundError:
         return set()
+
+
+FINAL_PORTFOLIO = WORK / 'portfolio_final.json'
+
+
+def final_portfolio():
+    """The nailed-down portfolio ({portfolio, book, ...}) once the portfolio pass is applied, else None."""
+    import json
+    try:
+        final = json.loads(FINAL_PORTFOLIO.read_text())
+        final['portfolio_set'] = set(final['portfolio_set'])
+        return final
+    except FileNotFoundError:
+        return None
+
+
+def apply_final_verdict(iid, p, final):
+    """Return the editor record with its verdict replaced by the final portfolio decision (copy)."""
+    if not final or p.get('verdict') == 'skip':
+        return p
+    q = dict(p)
+    q['verdict'] = 'portfolio' if iid in final['portfolio_set'] else 'backstock'
+    return q
