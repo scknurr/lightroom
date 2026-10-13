@@ -145,7 +145,7 @@ h2{font-size:22px;margin:6px 0 4px}h3{font-size:16px;margin:0}.desc{color:var(--
 <header><div class="bar"><h1>Rescue Library</h1>
 <nav><button data-v="themes" class="on">Themes</button><button data-v="portfolio">Portfolio</button><button data-v="ig">Instagram queue</button><button data-v="years">By year</button></nav>
 <input type="search" id="q" placeholder="Search titles, captions, keywords…">
-<label class="tog"><input type="checkbox" id="pOnly"> Portfolio only</label></div></header>
+<label class="tog"><input type="checkbox" id="pOnly"> Portfolio only</label><a href="ranked.html" style="color:var(--acc)">Ranked 1→N</a><a href="private.html" style="color:var(--acc)">Private review</a></div></header>
 <main id="main"></main>
 <script id="data" type="application/json">__DATA__</script>
 <script>
