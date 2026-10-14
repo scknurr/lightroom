@@ -7,7 +7,8 @@ export const meta = {
   ],
 }
 const { n, calibration } = args
-const chunks = Array.from({ length: n }, (_, c) => ({ c, index: `/Volumes/G DRIVE/LR-RESCUE.noindex/portfolio/chunk_${String(c).padStart(3, '0')}.json` }))
+const dir = args.dir || '/Volumes/G DRIVE/LR-RESCUE.noindex/portfolio'
+const chunks = Array.from({ length: n }, (_, c) => ({ c, index: `${dir}/chunk_${String(c).padStart(3, '0')}.json` }))
 const THUMB = '/Volumes/G DRIVE/LR-RESCUE.noindex/thumbs/<id div 1000, zero-padded to 5 digits>/<id>.jpg'
 const JUDGE = { type: 'object', properties: { frames: { type: 'array', items: { type: 'object', properties: {
   image_id: { type: 'integer' }, keep: { type: 'boolean' }, strength: { type: 'integer', minimum: 1, maximum: 10 },
@@ -21,6 +22,7 @@ const results = await pipeline(
   chunks,
   (c) => agent(`You are a strict senior photo editor finalizing a photographer's PORTFOLIO (20-year archive). The theme is given in the "theme" field of ${c.index}.
 FIRST view the calibration sheet ${calibration}: nine of the archive's very best frames as chosen by a judging panel. They define the top of the scale (10).
+If ${c.index} has a non-null "bar" field, view that sheet too: the strongest frames ALREADY in this theme's portfolio. A frame here should be kept only if it would hold its own beside them and adds something they do not (a different subject, moment, place or light); a weaker echo of an existing frame is not a keep.
 THEN read ${c.index} and view each of its contact sheets (3x3 grids, tiles labeled "<slot>  #<image_id>"); open a frame larger when needed at ${THUMB}. Frames are in capture-time order.
 For EVERY frame decide:
 - keep (portfolio) only if it would sit comfortably in a curated portfolio next to the calibration frames, OR it is clearly the definitive frame of a meaningful subject, moment or story in this theme. Judge by genre (documentary/protest: moment and story; portraits: expression; landscapes: light and composition; pets: character; events: only genuinely exceptional frames). Corporate and routine event coverage almost never qualifies.
