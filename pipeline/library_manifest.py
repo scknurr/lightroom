@@ -76,6 +76,10 @@ def main():
                 if r and r != 'soft':
                     kws.add(f'Rescue|Cull|{clean(r)}')
         rec = {'uuid': uuid, 'image_id': iid, 'path': path, 'collections': []}
+        if iid >= 900_000_000:
+            # not in the catalog yet (pseudo id from imports.py): the plugin resolves it by path once the
+            # import block has added it, i.e. on the second run of the same manifest
+            del rec['uuid'], rec['image_id']
         if iid in foreign:
             # Not the owner's photo: tag and collect for him to delete or relocate; never rate, title or publish it.
             kws.add('Rescue|Cull|not my photo')

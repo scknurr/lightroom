@@ -66,6 +66,9 @@ def main():
             meta[i] = {'id': i, 't': p.get('title', ''), 'c': p.get('caption', ''), 'w': w, 'h': h}
         return meta[i]
 
+    # public section titles and intros (WORK/site_copy/intros.json); the editors' internal notes are never published
+    f = WORK / 'site_copy' / 'intros.json'
+    intros = {x['theme']: x for x in json.loads(f.read_text())['sections']} if f.exists() else {}
     book = [info(i) for i in final['book'] if ok(i)]
     themes = []
     order = {n: k for k, n in enumerate(THEME_ORDER)}
@@ -75,7 +78,8 @@ def main():
         photos = [info(i) for i in ids if ok(i)]
         if len(photos) < 3:
             continue
-        themes.append({'name': t, 'slug': slug(t), 'note': final.get('section_notes', {}).get(t, ''), 'photos': photos})
+        pub = intros.get(t, {})
+        themes.append({'name': pub.get('title') or t, 'slug': slug(t), 'note': pub.get('intro', ''), 'photos': photos})
 
     nav = lambda active: (f'<header class="top"><a class="brand" href="index.html">{NAME}</a><nav>'
                           f'<a href="index.html"{" class=on" if active == "home" else ""}>Selected</a>'

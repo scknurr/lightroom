@@ -3,13 +3,13 @@ export const meta = {
   description: 'One editor per theme sees all surviving frames together: dedupe across shoots and years, one standard, best-first order',
   phases: [{ title: 'Consolidate', detail: 'one editor per theme' }],
 }
-const { themes, allThemes, round = 1 } = args
+const { themes, allThemes, round = 1, note = '' } = args
 const THUMB = '/Volumes/G DRIVE/LR-RESCUE.noindex/thumbs/<id div 1000, zero-padded to 5 digits>/<id>.jpg'
 phase('Consolidate')
 const res = await parallel(themes.map(t => async () => {
   const r = await agent(`You are the editor responsible for the "${t.theme}" section of a photographer's final portfolio (20-year archive).
 The JSON at ${t.index} lists contact sheets of EVERY frame that survived a strict first pass in this theme (sorted by first-pass strength), plus first-pass notes per id. View ALL sheets with the Read tool before deciding; open frames larger at ${THUMB} when needed. View the calibration sheet /Volumes/G DRIVE/LR-RESCUE.noindex/sheets/portfolio_calibration.jpg first: it shows the archive's very best frames.
-Now that you can see the whole theme at once:
+${note ? note + '\n' : ''}Now that you can see the whole theme at once:
 1. Remove near-duplicates and redundant frames across different shoots and years (same idea, same pose, same view): keep the strongest one.
 2. Apply ONE consistent standard: every frame you keep must hold its own in a published portfolio section for this theme. Depth varies by theme; a thin theme may keep only a handful, a deep one more.
 3. Order the keepers best first (the order will be used as-is).
