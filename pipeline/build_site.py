@@ -134,6 +134,11 @@ def main():
     (SITE / 'about.html').write_text(page(f'About — {NAME}', 'about', about))
     (SITE / 'site.css').write_text(CSS)
     (SITE / 'site.js').write_text(JS)
+    # drop images from earlier builds that are no longer published (removed, private or not-mine photos)
+    live = {str(i) for i in meta}
+    for f in (SITE / 'img').glob('*.jpg'):
+        if f.stem.split('-')[0] not in live:
+            f.unlink()
     report = {'book': len(book), 'themes': {t['name']: len(t['photos']) for t in themes},
               'excluded_minors': sorted(set(skipped_minors)), 'images': len(meta)}
     (SITE / 'build-report.json').write_text(json.dumps(report, indent=1))
