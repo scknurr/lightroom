@@ -70,7 +70,7 @@ def main():
                        'n': (p.get('treatment') or {}).get('notes', ''), 'w': p.get('why', '')})
     labels = {'judges': ['Judges’ top 60', 'three independent judges (impact, craft, story), combined'],
               'group': ['Judged top tier', 'ranked by eye in mixed groups of 36, by placement in group'],
-              'book': ['The Book', 'the flagship set: three judges picked from every theme’s best, votes combined'],
+              'book': ['The Book', 'the flagship set of 250: every earlier Book pick plus the judges’ choices from the portfolio'],
               'portfolio': ['Portfolio', 'the rest of the nailed-down portfolio, by strict-pass strength'],
               'score': ['Everything else', 'by editor score, then portfolio before backstock, then the model score']}
     sections = []
