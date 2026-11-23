@@ -63,6 +63,75 @@ local function logPathFor(manifestPath)
   return LrPathUtils.child(dir, base .. '.apply-log.txt')
 end
 
+-- Export job: { "export": { "uuids": [...], "folder": "/abs/dir", "long_edge": 2400, "quality": 0.9 } }
+-- Renders each photo with its current Lightroom develop settings to <folder>/<uuid>.jpg (sRGB, location
+-- metadata removed). Read-only on the catalog. Already-exported files are skipped.
+local function runExport(job, base)
+  local LrApplication = import 'LrApplication'
+  local LrExportSession = import 'LrExportSession'
+  local spec = job.export
+  local catalog = LrApplication.activeCatalog()
+  local folder = spec.folder
+  LrFileUtils.createAllDirectories(folder)
+  local photos, missing, skipped = {}, {}, 0
+  for _, uuid in ipairs(spec.uuids or {}) do
+    if LrFileUtils.exists(LrPathUtils.child(folder, uuid .. '.jpg')) then
+      skipped = skipped + 1
+    else
+      local p = catalog:findPhotoByUuid(uuid)
+      if p then photos[#photos + 1] = p else missing[#missing + 1] = uuid end
+    end
+  end
+  local done, failed = 0, {}
+  if #photos > 0 then
+    local session = LrExportSession {
+      photosToExport = photos,
+      exportSettings = {
+        LR_export_destinationType = 'specificFolder',
+        LR_export_destinationPathPrefix = folder,
+        LR_export_useSubfolder = false,
+        LR_collisionHandling = 'rename',
+        LR_format = 'JPEG',
+        LR_jpeg_quality = spec.quality or 0.9,
+        LR_export_colorSpace = 'sRGB',
+        LR_size_doConstrain = true,
+        LR_size_resizeType = 'longEdge',
+        LR_size_maxHeight = spec.long_edge or 2400,
+        LR_size_maxWidth = spec.long_edge or 2400,
+        LR_size_doNotEnlarge = true,
+        LR_size_units = 'pixels',
+        LR_size_resolution = 240,
+        LR_outputSharpeningOn = true,
+        LR_outputSharpeningMedia = 'screen',
+        LR_outputSharpeningLevel = 2,
+        LR_metadata_keywordOptions = 'flat',
+        LR_removeLocationMetadata = true,
+        LR_minimizeEmbeddedMetadata = false,
+        LR_reimportExportedPhoto = false,
+        LR_renamingTokensOn = true,
+        LR_tokens = '{{image_name}}',
+      },
+    }
+    for _, rendition in session:renditions() do
+      local ok, pathOrMsg = rendition:waitForRender()
+      if ok then
+        local dest = LrPathUtils.child(folder, rendition.photo:getRawMetadata('uuid') .. '.jpg')
+        if pathOrMsg ~= dest then
+          if LrFileUtils.exists(dest) then LrFileUtils.delete(dest) end
+          LrFileUtils.move(pathOrMsg, dest)
+        end
+        done = done + 1
+      else
+        failed[#failed + 1] = rendition.photo:getRawMetadata('uuid') .. ': ' .. tostring(pathOrMsg)
+      end
+    end
+  end
+  local text = string.format('Exported %d, already there %d, not found %d, failed %d\n', done, skipped, #missing, #failed)
+  if #missing > 0 then text = text .. 'NOT FOUND: ' .. table.concat(missing, ', ') .. '\n' end
+  if #failed > 0 then text = text .. 'FAILED:\n' .. table.concat(failed, '\n') .. '\n' end
+  return (#failed == 0 and #missing == 0) and 'done' or 'done-with-warnings', text
+end
+
 -- Run one job file. Returns true when it ran (successfully or not).
 local function runJob(jobPath)
   local base = jobPath:gsub('%.job%.json$', '')
@@ -71,6 +140,13 @@ local function runJob(jobPath)
   local okRead, text = LrTasks.pcall(LrFileUtils.readFile, running)
   local okJson, job = false, nil
   if okRead and type(text) == 'string' then okJson, job = pcall(json.decode, text) end
+  if okJson and type(job) == 'table' and type(job.export) == 'table' then
+    local okE, status, text = LrTasks.pcall(runExport, job, base)
+    if not okE then status, text = 'failed', 'error: ' .. tostring(status) end
+    writeText(base .. '.result.txt', status:upper() .. '\n' .. (text or '') .. '\n')
+    LrFileUtils.move(running, base .. (status == 'failed' and '.job.failed' or '.job.done'))
+    return true
+  end
   if not okJson or type(job) ~= 'table' or type(job.manifest) ~= 'string' then
     writeText(base .. '.result.txt', 'FAILED: job file is not valid JSON with a "manifest" path\n')
     LrFileUtils.move(running, base .. '.job.failed')
@@ -143,7 +219,13 @@ function Q.runPending()
   return n
 end
 
--- Background watcher: started once per Lightroom session.
+-- Record that a watcher is running (QueueInit.lua calls this once per Lightroom session).
+function Q.markAlive()
+  local dir = queueFolder()
+  if dir then writeText(LrPathUtils.child(dir, 'queue-alive.txt'), 'watcher started ' .. os.date('%Y-%m-%d %H:%M:%S') .. '\n') end
+end
+
+-- Older standalone watcher, kept for compatibility; QueueInit.lua now owns the loop.
 function Q.startWatcher()
   LrTasks.startAsyncTask(function()
     local dir = queueFolder()
