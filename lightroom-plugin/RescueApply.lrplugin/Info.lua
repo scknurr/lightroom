@@ -25,7 +25,15 @@ return {
       title = 'Rescue: Apply manifest…',
       file = 'ApplyManifest.lua',
     },
+    {
+      title = 'Rescue: Run queued jobs now',
+      file = 'RunQueue.lua',
+    },
   },
+
+  -- Watches the job folder named in queue-folder.txt (see RescueQueue.lua) so
+  -- manifests can be applied without the dialog. Inert without that file.
+  LrInitPlugin = 'QueueInit.lua',
 
   -- Plugin-private photo fields used to tag our virtual copies and the
   -- masters a run changed (idempotency + audit).
